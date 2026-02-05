@@ -1,0 +1,25 @@
+api_version: "v1"
+kind: "product"
+metadata:
+  name: "pip-meta-test"
+  version: "2026.02.05"
+  owners: ["platform"]
+compose:
+  - name: "pip-meta-test"
+    version: "2026.02.05"
+    source: "local"
+    path: "fixtures/meta-test-profile.yaml"
+inputs:
+  package_xml:
+    enabled: false
+    tags: []
+  manual:
+    python:
+      - "flask==3.1.2"
+      - "nicegui==3.6.1"
+publish:
+  repository:
+    name: "avular"
+    channel: "dev"
+    snapshot_prefix: "meta-test"
+    signing_key: "avular-release"

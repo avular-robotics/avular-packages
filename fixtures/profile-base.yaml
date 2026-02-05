@@ -1,0 +1,22 @@
+api_version: "v1"
+kind: "profile"
+metadata:
+  name: "base-profile"
+  version: "2026.01"
+  owners: ["platform"]
+inputs:
+  package_xml:
+    enabled: true
+    tags: ["debian_depend", "pip_depend"]
+packaging:
+  groups:
+    - name: "apt-individual"
+      mode: "individual"
+      scope: "runtime"
+      matches: ["apt:*"]
+      targets: ["24.04"]
+    - name: "pip-meta"
+      mode: "meta-bundle"
+      scope: "runtime"
+      matches: ["pip:*"]
+      targets: ["24.04"]

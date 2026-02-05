@@ -1,0 +1,32 @@
+api_version: "v1"
+kind: "product"
+metadata:
+  name: "avular-e2e"
+  version: "2026.02.02"
+  owners: ["platform"]
+compose:
+  - name: "e2e-base-profile"
+    version: "2026.02.02"
+    source: "local"
+    path: "fixtures/e2e-profile.yaml"
+inputs:
+  package_xml:
+    enabled: true
+    tags: ["debian_depend", "pip_depend"]
+resolutions:
+  - dependency: "apt:fmt"
+    action: "replace"
+    value: "libfmt-dev"
+    reason: "map rosdep key to Ubuntu package"
+    owner: "platform"
+  - dependency: "apt:rclcpp"
+    action: "replace"
+    value: "ros-humble-rclcpp"
+    reason: "map rosdep key to ROS 2 package"
+    owner: "platform"
+publish:
+  repository:
+    name: "avular"
+    channel: "dev"
+    snapshot_prefix: "e2e"
+    signing_key: "avular-release"

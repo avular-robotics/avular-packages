@@ -1,0 +1,4 @@
+.cursor/
+out/
+.venv/
+.venv-build/

@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>sample_pkg</name>
+  <version>0.1.0</version>
+  <description>Sample package for MVP fixture</description>
+  <maintainer email="dev@example.com">Dev</maintainer>
+  <license>MIT</license>
+  <export>
+    <debian_depend>libfoo</debian_depend>
+    <debian_depend>libbar</debian_depend>
+    <pip_depend version="2.31.0">requests</pip_depend>
+  </export>
+</package>

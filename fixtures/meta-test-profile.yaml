@@ -1,0 +1,23 @@
+api_version: "v1"
+kind: "profile"
+metadata:
+  name: "pip-meta-test"
+  version: "2026.02.05"
+  owners: ["platform"]
+inputs:
+  package_xml:
+    enabled: false
+    tags: []
+packaging:
+  groups:
+    - name: "pip-meta"
+      mode: "meta-bundle"
+      scope: "runtime"
+      matches: ["pip:*"]
+      targets: ["22.04"]
+publish:
+  repository:
+    name: "avular"
+    channel: "dev"
+    snapshot_prefix: "meta-test"
+    signing_key: "avular-release"

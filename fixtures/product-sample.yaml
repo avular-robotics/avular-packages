@@ -1,0 +1,21 @@
+api_version: "v1"
+kind: "product"
+metadata:
+  name: "sample-product"
+  version: "2026.01.27"
+  owners: ["platform"]
+compose:
+  - name: "base-profile"
+    version: "2026.01"
+    source: "local"
+    path: "fixtures/profile-base.yaml"
+inputs:
+  package_xml:
+    enabled: true
+    tags: ["debian_depend", "pip_depend"]
+publish:
+  repository:
+    name: "avular"
+    channel: "dev"
+    snapshot_prefix: "sample"
+    signing_key: "avular-release"
