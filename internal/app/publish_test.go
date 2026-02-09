@@ -61,7 +61,7 @@ func TestPublish_AptlyMissingGPGKey(t *testing.T) {
 				SnapshotID: "test-snap",
 				Repository: "testrepo",
 				Channel:    "stable",
-				SigningKey:  "", // no key in intent
+				SigningKey: "", // no key in intent
 			},
 		},
 	}
@@ -84,8 +84,8 @@ func TestPublish_ProGetMissingAPIKey(t *testing.T) {
 		},
 	}
 	_, err := svc.Publish(context.Background(), PublishRequest{
-		OutputDir:   "/tmp/test-publish",
-		RepoBackend: "proget",
+		OutputDir:    "/tmp/test-publish",
+		RepoBackend:  "proget",
 		ProGetAPIKey: "", // no key
 	})
 	require.Error(t, err)
