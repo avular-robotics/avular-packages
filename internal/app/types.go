@@ -45,6 +45,7 @@ type BuildRequest struct {
 	OutputDir            string
 	DebsDir              string
 	TargetUbuntu         string
+	SchemaFiles          []string
 	PipIndexURL          string
 	InternalDebDir       string
 	InternalSrc          []string

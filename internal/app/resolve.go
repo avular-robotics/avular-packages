@@ -35,6 +35,9 @@ func (s Service) Resolve(ctx context.Context, req ResolveRequest) (ResolveResult
 		return ResolveResult{}, err
 	}
 
+	// Emit hints about flags that duplicate spec defaults (before applying).
+	emitHints(checkResolveDefaultsHints(req, product.Defaults))
+
 	// Apply spec defaults for values not provided by the caller
 	req = applySpecDefaults(req, product.Defaults)
 

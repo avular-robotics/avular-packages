@@ -131,7 +131,19 @@ func publishProGet(ctx context.Context, outputDir string, req PublishRequest, in
 			WithMsg("proget api key is required for proget backend")
 	}
 
-	adapter := adapters.NewRepoSnapshotProGetAdapter(endpoint, feed, component, debsDir, user, apiKey, intent.SnapshotPrefix, workers, req.ProGetTimeoutSec, req.ProGetRetries, req.ProGetRetryDelayMs)
+	adapter := adapters.NewRepoSnapshotProGetAdapter(adapters.ProGetConfig{
+		Endpoint:       endpoint,
+		Feed:           feed,
+		Component:      component,
+		DebsDir:        debsDir,
+		Username:       user,
+		APIKey:         apiKey,
+		SnapshotPrefix: intent.SnapshotPrefix,
+		Workers:        workers,
+		TimeoutSec:     req.ProGetTimeoutSec,
+		Retries:        req.ProGetRetries,
+		RetryDelayMs:   req.ProGetRetryDelayMs,
+	})
 	if err := adapter.Publish(ctx, intent.SnapshotID); err != nil {
 		return err
 	}

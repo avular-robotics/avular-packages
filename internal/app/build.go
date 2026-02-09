@@ -9,16 +9,10 @@ import (
 	"github.com/ZanzyTHEbar/errbuilder-go"
 
 	"avular-packages/internal/adapters"
+	"avular-packages/internal/types"
 )
 
 func (s Service) Build(ctx context.Context, req BuildRequest) (BuildResult, error) {
-	outputDir := strings.TrimSpace(req.OutputDir)
-	if outputDir == "" {
-		return BuildResult{}, errbuilder.New().
-			WithCode(errbuilder.CodeInvalidArgument).
-			WithMsg("output directory is required")
-	}
-
 	// Determine whether the resolve phase should run.
 	// With auto-discovery and spec defaults the user no longer needs to
 	// supply --product, --repo-index, and --target-ubuntu explicitly;
@@ -26,6 +20,23 @@ func (s Service) Build(ctx context.Context, req BuildRequest) (BuildResult, erro
 	productPath := strings.TrimSpace(req.ProductPath)
 	if productPath == "" {
 		productPath = discoverProduct()
+	}
+
+	// If we found a product, load it to apply build-specific defaults
+	// before evaluating outputDir and other fields.
+	if productPath != "" {
+		product, err := s.SpecLoader.LoadProduct(productPath)
+		if err == nil {
+			emitHints(checkBuildDefaultsHints(req, product.Defaults))
+			req = applyBuildDefaults(req, product.Defaults)
+		}
+	}
+
+	outputDir := strings.TrimSpace(req.OutputDir)
+	if outputDir == "" {
+		return BuildResult{}, errbuilder.New().
+			WithCode(errbuilder.CodeInvalidArgument).
+			WithMsg("output directory is required")
 	}
 
 	resolveNeeded := productPath != "" ||
@@ -40,6 +51,7 @@ func (s Service) Build(ctx context.Context, req BuildRequest) (BuildResult, erro
 			RepoIndex:            req.RepoIndex,
 			OutputDir:            outputDir,
 			TargetUbuntu:         req.TargetUbuntu,
+			SchemaFiles:          req.SchemaFiles,
 			CompatGet:            true,
 			EmitAptPreferences:   req.EmitAptPreferences,
 			EmitAptInstallList:   req.EmitAptInstallList,
@@ -57,7 +69,7 @@ func (s Service) Build(ctx context.Context, req BuildRequest) (BuildResult, erro
 	if debsDir == "" {
 		debsDir = filepath.Join(outputDir, "debs")
 	}
-	if err := os.MkdirAll(debsDir, 0755); err != nil {
+	if err := os.MkdirAll(debsDir, 0o750); err != nil {
 		return BuildResult{}, errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("failed to create debs directory").
@@ -80,4 +92,32 @@ func (s Service) Build(ctx context.Context, req BuildRequest) (BuildResult, erro
 		return BuildResult{}, err
 	}
 	return BuildResult{DebsDir: debsDir}, nil
+}
+
+// applyBuildDefaults fills in BuildRequest fields from the product
+// spec's defaults section when the request field is empty.  It covers
+// both the shared resolve fields and build-specific ones.
+func applyBuildDefaults(req BuildRequest, defaults types.SpecDefaults) BuildRequest {
+	if strings.TrimSpace(req.TargetUbuntu) == "" && defaults.TargetUbuntu != "" {
+		req.TargetUbuntu = defaults.TargetUbuntu
+	}
+	if len(req.Workspace) == 0 && len(defaults.Workspace) > 0 {
+		req.Workspace = defaults.Workspace
+	}
+	if strings.TrimSpace(req.RepoIndex) == "" && defaults.RepoIndex != "" {
+		req.RepoIndex = defaults.RepoIndex
+	}
+	if strings.TrimSpace(req.OutputDir) == "" && defaults.Output != "" {
+		req.OutputDir = defaults.Output
+	}
+	if strings.TrimSpace(req.PipIndexURL) == "" && defaults.PipIndexURL != "" {
+		req.PipIndexURL = defaults.PipIndexURL
+	}
+	if strings.TrimSpace(req.InternalDebDir) == "" && defaults.InternalDebDir != "" {
+		req.InternalDebDir = defaults.InternalDebDir
+	}
+	if len(req.InternalSrc) == 0 && len(defaults.InternalSrc) > 0 {
+		req.InternalSrc = defaults.InternalSrc
+	}
+	return req
 }

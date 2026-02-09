@@ -94,19 +94,16 @@ func buildPruneAdapter(backend string, req PruneRequest) (ports.RepoSnapshotPort
 		}
 		component := strings.TrimSpace(req.ProGetComponent)
 		user := strings.TrimSpace(req.ProGetUser)
-		adapter := adapters.NewRepoSnapshotProGetAdapter(
-			endpoint,
-			feed,
-			component,
-			"",
-			user,
-			apiKey,
-			"",
-			0,
-			req.ProGetTimeoutSec,
-			req.ProGetRetries,
-			req.ProGetRetryDelayMs,
-		)
+		adapter := adapters.NewRepoSnapshotProGetAdapter(adapters.ProGetConfig{
+			Endpoint:     endpoint,
+			Feed:         feed,
+			Component:    component,
+			Username:     user,
+			APIKey:       apiKey,
+			TimeoutSec:   req.ProGetTimeoutSec,
+			Retries:      req.ProGetRetries,
+			RetryDelayMs: req.ProGetRetryDelayMs,
+		})
 		return adapter, nil
 	default:
 		return nil, errbuilder.New().
