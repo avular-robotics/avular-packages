@@ -24,6 +24,8 @@ type RepoIndexBuildRequest struct {
 	HTTPTimeoutSec   int
 	HTTPRetries      int
 	HTTPRetryDelayMs int
+	CacheDir         string
+	CacheTTLMinutes  int
 }
 
 type RepoIndexBuilderPort interface {

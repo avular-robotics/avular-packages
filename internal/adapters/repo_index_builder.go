@@ -47,6 +47,11 @@ type httpRetryConfig struct {
 	baseDelay time.Duration
 }
 
+type cacheConfig struct {
+	dir string
+	ttl time.Duration
+}
+
 func normalizeHTTPConfig(timeoutSec int, retries int, delayMs int) httpRetryConfig {
 	timeout := time.Duration(timeoutSec) * time.Second
 	if timeout <= 0 {
@@ -64,6 +69,17 @@ func normalizeHTTPConfig(timeoutSec int, retries int, delayMs int) httpRetryConf
 		timeout:   timeout,
 		retries:   retryCount,
 		baseDelay: baseDelay,
+	}
+}
+
+func normalizeCacheConfig(dir string, ttlMinutes int) cacheConfig {
+	trimmed := strings.TrimSpace(dir)
+	if trimmed == "" || ttlMinutes <= 0 {
+		return cacheConfig{}
+	}
+	return cacheConfig{
+		dir: trimmed,
+		ttl: time.Duration(ttlMinutes) * time.Minute,
 	}
 }
 
@@ -90,7 +106,8 @@ func (a RepoIndexBuilderAdapter) Build(ctx context.Context, request ports.RepoIn
 		request.AptArch,
 	)
 	httpCfg := normalizeHTTPConfig(request.HTTPTimeoutSec, request.HTTPRetries, request.HTTPRetryDelayMs)
-	aptIndex, err := buildAptIndex(ctx, aptSources, request.AptUser, request.AptAPIKey, request.AptWorkers, httpCfg)
+	cacheCfg := normalizeCacheConfig(request.CacheDir, request.CacheTTLMinutes)
+	aptVersions, aptPackages, err := buildAptIndex(ctx, aptSources, request.AptUser, request.AptAPIKey, request.AptWorkers, httpCfg, cacheCfg)
 	if err != nil {
 		return types.RepoIndexFile{}, err
 	}
@@ -103,13 +120,15 @@ func (a RepoIndexBuilderAdapter) Build(ctx context.Context, request ports.RepoIn
 		request.PipMax,
 		request.PipWorkers,
 		httpCfg,
+		cacheCfg,
 	)
 	if err != nil {
 		return types.RepoIndexFile{}, err
 	}
 	return types.RepoIndexFile{
-		Apt: aptIndex,
-		Pip: pipIndexMap,
+		Apt:         aptVersions,
+		AptPackages: aptPackages,
+		Pip:         pipIndexMap,
 	}, nil
 }
 
@@ -141,15 +160,15 @@ func (a RepoIndexWriterAdapter) Write(path string, index types.RepoIndexFile) er
 	return nil
 }
 
-func buildAptIndex(ctx context.Context, sources []aptSource, user string, apiKey string, workerCount int, httpCfg httpRetryConfig) (map[string][]string, error) {
+func buildAptIndex(ctx context.Context, sources []aptSource, user string, apiKey string, workerCount int, httpCfg httpRetryConfig, cacheCfg cacheConfig) (map[string][]string, map[string][]types.AptPackageVersion, error) {
 	if len(sources) == 0 {
-		return nil, errbuilder.New().
+		return nil, nil, errbuilder.New().
 			WithCode(errbuilder.CodeInvalidArgument).
 			WithMsg("apt sources are required")
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	merged := map[string]map[string]struct{}{}
+	merged := map[string]map[string]types.AptPackageVersion{}
 	var mu sync.Mutex
 	var errMu sync.Mutex
 	var firstErr error
@@ -171,7 +190,7 @@ func buildAptIndex(ctx context.Context, sources []aptSource, user string, apiKey
 			if ctx.Err() != nil {
 				return
 			}
-			index, err := buildAptIndexSingle(ctx, source, user, apiKey, httpCfg)
+			index, err := buildAptIndexSingle(ctx, source, user, apiKey, httpCfg, cacheCfg)
 			if err != nil {
 				errMu.Lock()
 				if firstErr == nil {
@@ -184,10 +203,13 @@ func buildAptIndex(ctx context.Context, sources []aptSource, user string, apiKey
 			mu.Lock()
 			for name, versions := range index {
 				if merged[name] == nil {
-					merged[name] = map[string]struct{}{}
+					merged[name] = map[string]types.AptPackageVersion{}
 				}
-				for _, version := range versions {
-					merged[name][version] = struct{}{}
+				for version, metadata := range versions {
+					if _, ok := merged[name][version]; ok {
+						continue
+					}
+					merged[name][version] = metadata
 				}
 			}
 			mu.Unlock()
@@ -195,12 +217,13 @@ func buildAptIndex(ctx context.Context, sources []aptSource, user string, apiKey
 	}
 	wg.Wait()
 	if firstErr != nil {
-		return nil, firstErr
+		return nil, nil, firstErr
 	}
-	return finalizeVersions(merged, sortDebVersions), nil
+	versions, packages := finalizeAptPackages(merged)
+	return versions, packages, nil
 }
 
-func buildAptIndexSingle(ctx context.Context, source aptSource, user string, apiKey string, httpCfg httpRetryConfig) (map[string][]string, error) {
+func buildAptIndexSingle(ctx context.Context, source aptSource, user string, apiKey string, httpCfg httpRetryConfig, cacheCfg cacheConfig) (map[string]map[string]types.AptPackageVersion, error) {
 	base := strings.TrimRight(strings.TrimSpace(source.Endpoint), "/")
 	component := strings.TrimSpace(source.Component)
 	if component == "" {
@@ -217,13 +240,13 @@ func buildAptIndexSingle(ctx context.Context, source aptSource, user string, api
 			WithMsg("apt distribution is required")
 	}
 	gzURL := fmt.Sprintf("%s/dists/%s/%s/binary-%s/Packages.gz", base, distribution, component, arch)
-	index, notFound, err := fetchAptPackages(ctx, gzURL, user, apiKey, httpCfg)
+	index, notFound, err := fetchAptPackages(ctx, gzURL, user, apiKey, httpCfg, cacheCfg)
 	if err != nil {
 		return nil, err
 	}
 	if notFound {
 		plainURL := fmt.Sprintf("%s/dists/%s/%s/binary-%s/Packages", base, distribution, component, arch)
-		index, _, err = fetchAptPackages(ctx, plainURL, user, apiKey, httpCfg)
+		index, _, err = fetchAptPackages(ctx, plainURL, user, apiKey, httpCfg, cacheCfg)
 		if err != nil {
 			return nil, err
 		}
@@ -231,24 +254,23 @@ func buildAptIndexSingle(ctx context.Context, source aptSource, user string, api
 	return index, nil
 }
 
-func fetchAptPackages(ctx context.Context, url string, user string, apiKey string, httpCfg httpRetryConfig) (map[string][]string, bool, error) {
-	resp, err := doRequest(ctx, url, user, apiKey, httpCfg)
+func fetchAptPackages(ctx context.Context, url string, user string, apiKey string, httpCfg httpRetryConfig, cacheCfg cacheConfig) (map[string]map[string]types.AptPackageVersion, bool, error) {
+	status, body, header, err := fetchURL(ctx, url, user, apiKey, httpCfg, cacheCfg)
 	if err != nil {
 		return nil, false, err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
+	if status == http.StatusNotFound {
 		return nil, true, nil
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if status < 200 || status >= 300 {
 		return nil, false, errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("failed to fetch apt packages").
-			WithCause(fmt.Errorf("status=%d url=%s", resp.StatusCode, url))
+			WithCause(fmt.Errorf("status=%d url=%s", status, url))
 	}
-	var reader io.Reader = resp.Body
-	if strings.HasSuffix(url, ".gz") || strings.EqualFold(resp.Header.Get("Content-Encoding"), "gzip") {
-		gz, err := gzip.NewReader(resp.Body)
+	var reader io.Reader = strings.NewReader(string(body))
+	if strings.HasSuffix(url, ".gz") || strings.EqualFold(header.Get("Content-Encoding"), "gzip") {
+		gz, err := gzip.NewReader(strings.NewReader(string(body)))
 		if err != nil {
 			return nil, false, errbuilder.New().
 				WithCode(errbuilder.CodeInternal).
@@ -265,19 +287,28 @@ func fetchAptPackages(ctx context.Context, url string, user string, apiKey strin
 	return index, false, nil
 }
 
-func parseAptPackages(reader io.Reader) (map[string][]string, error) {
-	packages := map[string]map[string]struct{}{}
+func parseAptPackages(reader io.Reader) (map[string]map[string]types.AptPackageVersion, error) {
+	packages := map[string]map[string]types.AptPackageVersion{}
 	buffered := bufio.NewReader(reader)
 	var name string
 	var version string
+	var dependsRaw string
+	var preDependsRaw string
+	var providesRaw string
+	var lastField string
 	flush := func() {
 		if name == "" || version == "" {
 			return
 		}
 		if packages[name] == nil {
-			packages[name] = map[string]struct{}{}
+			packages[name] = map[string]types.AptPackageVersion{}
 		}
-		packages[name][version] = struct{}{}
+		packages[name][version] = types.AptPackageVersion{
+			Version:    version,
+			Depends:    parseAptDependencyField(dependsRaw),
+			PreDepends: parseAptDependencyField(preDependsRaw),
+			Provides:   parseAptDependencyField(providesRaw),
+		}
 	}
 	for {
 		line, err := buffered.ReadString('\n')
@@ -287,11 +318,30 @@ func parseAptPackages(reader io.Reader) (map[string][]string, error) {
 				WithMsg("failed to read apt packages").
 				WithCause(err)
 		}
-		line = strings.TrimSpace(line)
-		if line == "" {
+		line = strings.TrimRight(line, "\r\n")
+		if strings.TrimSpace(line) == "" {
 			flush()
 			name = ""
 			version = ""
+			dependsRaw = ""
+			preDependsRaw = ""
+			providesRaw = ""
+			lastField = ""
+			if err == io.EOF {
+				break
+			}
+			continue
+		}
+		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+			continued := strings.TrimSpace(line)
+			switch lastField {
+			case "Depends":
+				dependsRaw = joinField(dependsRaw, continued)
+			case "Pre-Depends":
+				preDependsRaw = joinField(preDependsRaw, continued)
+			case "Provides":
+				providesRaw = joinField(providesRaw, continued)
+			}
 			if err == io.EOF {
 				break
 			}
@@ -299,6 +349,7 @@ func parseAptPackages(reader io.Reader) (map[string][]string, error) {
 		}
 		if strings.HasPrefix(line, "Package:") {
 			name = strings.TrimSpace(strings.TrimPrefix(line, "Package:"))
+			lastField = "Package"
 			if err == io.EOF {
 				break
 			}
@@ -306,6 +357,31 @@ func parseAptPackages(reader io.Reader) (map[string][]string, error) {
 		}
 		if strings.HasPrefix(line, "Version:") {
 			version = strings.TrimSpace(strings.TrimPrefix(line, "Version:"))
+			lastField = "Version"
+			if err == io.EOF {
+				break
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "Depends:") {
+			dependsRaw = strings.TrimSpace(strings.TrimPrefix(line, "Depends:"))
+			lastField = "Depends"
+			if err == io.EOF {
+				break
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "Pre-Depends:") {
+			preDependsRaw = strings.TrimSpace(strings.TrimPrefix(line, "Pre-Depends:"))
+			lastField = "Pre-Depends"
+			if err == io.EOF {
+				break
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "Provides:") {
+			providesRaw = strings.TrimSpace(strings.TrimPrefix(line, "Provides:"))
+			lastField = "Provides"
 			if err == io.EOF {
 				break
 			}
@@ -316,7 +392,7 @@ func parseAptPackages(reader io.Reader) (map[string][]string, error) {
 		}
 	}
 	flush()
-	return finalizeVersions(packages, sortDebVersions), nil
+	return packages, nil
 }
 
 func buildPipIndex(ctx context.Context, base string, user string, apiKey string, packages []string, maxPackages int, workerCount int, httpCfg httpRetryConfig) (map[string][]string, error) {
@@ -550,6 +626,29 @@ func sortPep440Versions(versions []string) []string {
 	return versions
 }
 
+func finalizeAptPackages(raw map[string]map[string]types.AptPackageVersion) (map[string][]string, map[string][]types.AptPackageVersion) {
+	versionIndex := map[string][]string{}
+	packageIndex := map[string][]types.AptPackageVersion{}
+	for name, versions := range raw {
+		keys := make([]string, 0, len(versions))
+		for version := range versions {
+			keys = append(keys, version)
+		}
+		keys = sortDebVersions(keys)
+		versionIndex[name] = keys
+		entries := make([]types.AptPackageVersion, 0, len(keys))
+		for _, version := range keys {
+			entry := versions[version]
+			if entry.Version == "" {
+				entry.Version = version
+			}
+			entries = append(entries, entry)
+		}
+		packageIndex[name] = entries
+	}
+	return versionIndex, packageIndex
+}
+
 func finalizeVersions(raw map[string]map[string]struct{}, sorter func([]string) []string) map[string][]string {
 	out := map[string][]string{}
 	for name, versions := range raw {
@@ -579,6 +678,33 @@ func uniqueStrings(values []string) []string {
 		out = append(out, value)
 	}
 	return out
+}
+
+func parseAptDependencyField(value string) []string {
+	raw := strings.TrimSpace(value)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	var out []string
+	for _, part := range parts {
+		entry := strings.TrimSpace(part)
+		if entry == "" {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+func joinField(current string, next string) string {
+	if current == "" {
+		return next
+	}
+	if next == "" {
+		return current
+	}
+	return current + " " + next
 }
 
 func resolveAptSources(values []string, endpoint string, distribution string, component string, arch string) []aptSource {

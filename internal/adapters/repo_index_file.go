@@ -45,6 +45,17 @@ func (a *RepoIndexFileAdapter) AvailableVersions(depType types.DependencyType, n
 	}
 }
 
+func (a *RepoIndexFileAdapter) AptPackages() (map[string][]types.AptPackageVersion, error) {
+	index, err := a.load()
+	if err != nil {
+		return nil, err
+	}
+	if index.AptPackages == nil {
+		return map[string][]types.AptPackageVersion{}, nil
+	}
+	return index.AptPackages, nil
+}
+
 func (a *RepoIndexFileAdapter) load() (types.RepoIndexFile, error) {
 	if a.loaded {
 		return a.cached, nil
@@ -68,6 +79,20 @@ func (a *RepoIndexFileAdapter) load() (types.RepoIndexFile, error) {
 	}
 	if idx.Pip == nil {
 		idx.Pip = map[string][]string{}
+	}
+	if len(idx.Apt) == 0 && len(idx.AptPackages) > 0 {
+		for name, versions := range idx.AptPackages {
+			for _, entry := range versions {
+				if entry.Version == "" {
+					continue
+				}
+				idx.Apt[name] = append(idx.Apt[name], entry.Version)
+			}
+			if len(idx.Apt[name]) > 1 {
+				idx.Apt[name] = uniqueStrings(idx.Apt[name])
+				idx.Apt[name] = sortDebVersions(idx.Apt[name])
+			}
+		}
 	}
 	a.cached = idx
 	a.loaded = true

@@ -29,6 +29,8 @@ type repoIndexOptions struct {
 	HTTPTimeoutSec   int
 	HTTPRetries      int
 	HTTPRetryDelayMs int
+	CacheDir         string
+	CacheTTLMinutes  int
 }
 
 func newRepoIndexCommand() *cobra.Command {
@@ -59,6 +61,8 @@ func newRepoIndexCommand() *cobra.Command {
 	cmd.Flags().IntVar(&opts.HTTPTimeoutSec, "http-timeout", 60, "HTTP timeout in seconds (0 = default)")
 	cmd.Flags().IntVar(&opts.HTTPRetries, "http-retries", 3, "HTTP retries (0 = default)")
 	cmd.Flags().IntVar(&opts.HTTPRetryDelayMs, "http-retry-delay-ms", 200, "HTTP retry base delay in ms (0 = default)")
+	cmd.Flags().StringVar(&opts.CacheDir, "cache-dir", "", "Optional cache directory for repo-index fetches")
+	cmd.Flags().IntVar(&opts.CacheTTLMinutes, "cache-ttl-minutes", 60, "Cache TTL in minutes (0 = no caching)")
 
 	_ = viper.BindPFlag("repo_index_output", cmd.Flags().Lookup("output"))
 	_ = viper.BindPFlag("apt_sources", cmd.Flags().Lookup("apt-source"))
@@ -78,6 +82,8 @@ func newRepoIndexCommand() *cobra.Command {
 	_ = viper.BindPFlag("http_timeout_sec", cmd.Flags().Lookup("http-timeout"))
 	_ = viper.BindPFlag("http_retries", cmd.Flags().Lookup("http-retries"))
 	_ = viper.BindPFlag("http_retry_delay_ms", cmd.Flags().Lookup("http-retry-delay-ms"))
+	_ = viper.BindPFlag("repo_index_cache_dir", cmd.Flags().Lookup("cache-dir"))
+	_ = viper.BindPFlag("repo_index_cache_ttl_minutes", cmd.Flags().Lookup("cache-ttl-minutes"))
 
 	return cmd
 }
@@ -103,6 +109,8 @@ func runRepoIndex(ctx context.Context, cmd *cobra.Command, opts repoIndexOptions
 		HTTPTimeoutSec:   resolveInt(cmd, opts.HTTPTimeoutSec, "http_timeout_sec", "http-timeout"),
 		HTTPRetries:      resolveInt(cmd, opts.HTTPRetries, "http_retries", "http-retries"),
 		HTTPRetryDelayMs: resolveInt(cmd, opts.HTTPRetryDelayMs, "http_retry_delay_ms", "http-retry-delay-ms"),
+		CacheDir:         resolveString(cmd, opts.CacheDir, "repo_index_cache_dir", "cache-dir"),
+		CacheTTLMinutes:  resolveInt(cmd, opts.CacheTTLMinutes, "repo_index_cache_ttl_minutes", "cache-ttl-minutes"),
 	})
 	if err != nil {
 		return err

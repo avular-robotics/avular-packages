@@ -70,6 +70,7 @@ func (s Service) Resolve(ctx context.Context, req ResolveRequest) (ResolveResult
 
 	policy := policies.NewPackagingPolicy(composed.Packaging.Groups, targetUbuntu)
 	resolver := core.NewResolverCore(adapters.NewRepoIndexFileAdapter(repoIndex), policy)
+	resolver.UseAptSolver = req.AptSatSolver
 	result, err := resolver.Resolve(ctx, deps, composed.Resolutions)
 	if err != nil {
 		return ResolveResult{}, err
@@ -92,6 +93,21 @@ func (s Service) Resolve(ctx context.Context, req ResolveRequest) (ResolveResult
 	}
 	if err := output.WriteResolutionReport(result.Resolution); err != nil {
 		return ResolveResult{}, err
+	}
+	if req.EmitAptPreferences {
+		if err := output.WriteAptPreferences(result.AptLocks); err != nil {
+			return ResolveResult{}, err
+		}
+	}
+	if req.EmitAptInstallList {
+		if err := output.WriteAptInstallList(result.AptLocks); err != nil {
+			return ResolveResult{}, err
+		}
+	}
+	if req.EmitSnapshotSources {
+		if err := output.WriteSnapshotSources(intent, req.SnapshotAptBaseURL, req.SnapshotAptComponent, req.SnapshotAptArchs); err != nil {
+			return ResolveResult{}, err
+		}
 	}
 	if req.CompatGet {
 		compat := adapters.NewCompatibilityOutputAdapter(outputDir)

@@ -12,15 +12,22 @@ type ValidateResult struct {
 }
 
 type ResolveRequest struct {
-	ProductPath  string
-	Profiles     []string
-	Workspace    []string
-	RepoIndex    string
-	OutputDir    string
-	SnapshotID   string
-	TargetUbuntu string
-	CompatGet    bool
-	CompatRosdep bool
+	ProductPath          string
+	Profiles             []string
+	Workspace            []string
+	RepoIndex            string
+	OutputDir            string
+	SnapshotID           string
+	TargetUbuntu         string
+	CompatGet            bool
+	CompatRosdep         bool
+	EmitAptPreferences   bool
+	EmitAptInstallList   bool
+	EmitSnapshotSources  bool
+	SnapshotAptBaseURL   string
+	SnapshotAptComponent string
+	SnapshotAptArchs     []string
+	AptSatSolver         bool
 }
 
 type ResolveResult struct {
@@ -30,16 +37,23 @@ type ResolveResult struct {
 }
 
 type BuildRequest struct {
-	ProductPath    string
-	Profiles       []string
-	Workspace      []string
-	RepoIndex      string
-	OutputDir      string
-	DebsDir        string
-	TargetUbuntu   string
-	PipIndexURL    string
-	InternalDebDir string
-	InternalSrc    []string
+	ProductPath          string
+	Profiles             []string
+	Workspace            []string
+	RepoIndex            string
+	OutputDir            string
+	DebsDir              string
+	TargetUbuntu         string
+	PipIndexURL          string
+	InternalDebDir       string
+	InternalSrc          []string
+	EmitAptPreferences   bool
+	EmitAptInstallList   bool
+	EmitSnapshotSources  bool
+	SnapshotAptBaseURL   string
+	SnapshotAptComponent string
+	SnapshotAptArchs     []string
+	AptSatSolver         bool
 }
 
 type BuildResult struct {
@@ -91,6 +105,8 @@ type RepoIndexRequest struct {
 	HTTPTimeoutSec   int
 	HTTPRetries      int
 	HTTPRetryDelayMs int
+	CacheDir         string
+	CacheTTLMinutes  int
 }
 
 type RepoIndexResult struct {

@@ -11,8 +11,9 @@ import (
 )
 
 type testRepoIndex struct {
-	apt map[string][]string
-	pip map[string][]string
+	apt         map[string][]string
+	aptPackages map[string][]types.AptPackageVersion
+	pip         map[string][]string
 }
 
 func (t testRepoIndex) AvailableVersions(depType types.DependencyType, name string) ([]string, error) {
@@ -24,6 +25,13 @@ func (t testRepoIndex) AvailableVersions(depType types.DependencyType, name stri
 	default:
 		return nil, nil
 	}
+}
+
+func (t testRepoIndex) AptPackages() (map[string][]types.AptPackageVersion, error) {
+	if t.aptPackages == nil {
+		return map[string][]types.AptPackageVersion{}, nil
+	}
+	return t.aptPackages, nil
 }
 
 func TestResolverBestCompatible(t *testing.T) {
@@ -349,5 +357,65 @@ func TestResolverFallsBackWhenHigherPriorityIsUnconstrained(t *testing.T) {
 	}
 	if diff := cmp.Diff("1.2.0", result.AptLocks[0].Version); diff != "" {
 		t.Fatalf("unexpected version (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolverAptSolverAddsTransitiveDeps(t *testing.T) {
+	repo := testRepoIndex{
+		apt: map[string][]string{
+			"app":  {"1.0.0"},
+			"liba": {"1.0.0", "2.0.0"},
+			"libb": {"1.0.0", "2.0.0"},
+			"libc": {"1.5.0"},
+		},
+		aptPackages: map[string][]types.AptPackageVersion{
+			"app": {
+				{Version: "1.0.0", Depends: []string{"liba (>= 1.0)", "libb | libc"}},
+			},
+			"liba": {
+				{Version: "1.0.0"},
+				{Version: "2.0.0"},
+			},
+			"libb": {
+				{Version: "1.0.0"},
+				{Version: "2.0.0"},
+			},
+			"libc": {
+				{Version: "1.5.0"},
+			},
+		},
+	}
+	policy := policies.NewPackagingPolicy([]types.PackagingGroup{
+		{Name: "apt-group", Mode: types.PackagingModeIndividual, Matches: []string{"apt:*"}, Targets: []string{"ubuntu-22.04"}},
+	}, "ubuntu-22.04")
+	resolver := NewResolverCore(repo, policy)
+	resolver.UseAptSolver = true
+
+	deps := []types.Dependency{
+		{
+			Name: "app",
+			Type: types.DependencyTypeApt,
+			Constraints: []types.Constraint{
+				{Name: "app", Op: types.ConstraintOpEq, Version: "1.0.0"},
+			},
+		},
+	}
+
+	result, err := resolver.Resolve(t.Context(), deps, nil)
+	require.NoError(t, err)
+	lockNames := map[string]string{}
+	for _, entry := range result.AptLocks {
+		lockNames[entry.Package] = entry.Version
+	}
+	if diff := cmp.Diff("1.0.0", lockNames["app"]); diff != "" {
+		t.Fatalf("unexpected app version (-want +got):\n%s", diff)
+	}
+	if _, ok := lockNames["liba"]; !ok {
+		t.Fatalf("missing transitive liba lock")
+	}
+	_, hasB := lockNames["libb"]
+	_, hasC := lockNames["libc"]
+	if !hasB && !hasC {
+		t.Fatalf("missing alternative dependency lock")
 	}
 }

@@ -13,6 +13,9 @@ func TestParseAptPackages(t *testing.T) {
 	content := strings.Join([]string{
 		"Package: libfoo",
 		"Version: 1.0.0",
+		"Depends: libc6 (>= 2.31), libbar | libbaz",
+		"Pre-Depends: dpkg (>= 1.19)",
+		"Provides: foo-virtual",
 		"",
 		"Package: libfoo",
 		"Version: 1.1.0",
@@ -23,13 +26,28 @@ func TestParseAptPackages(t *testing.T) {
 	}, "\n")
 	index, err := parseAptPackages(strings.NewReader(content))
 	require.NoError(t, err)
-	expectedBar := []string{"2.0.0"}
-	if diff := cmp.Diff(expectedBar, index["libbar"]); diff != "" {
-		t.Fatalf("unexpected libbar versions (-want +got):\n%s", diff)
+	barVersions := index["libbar"]
+	if _, ok := barVersions["2.0.0"]; !ok {
+		t.Fatalf("missing libbar version")
 	}
-	expectedFoo := []string{"1.0.0", "1.1.0"}
-	if diff := cmp.Diff(expectedFoo, index["libfoo"]); diff != "" {
-		t.Fatalf("unexpected libfoo versions (-want +got):\n%s", diff)
+	fooVersions := index["libfoo"]
+	if _, ok := fooVersions["1.0.0"]; !ok {
+		t.Fatalf("missing libfoo version 1.0.0")
+	}
+	if _, ok := fooVersions["1.1.0"]; !ok {
+		t.Fatalf("missing libfoo version 1.1.0")
+	}
+	deps := fooVersions["1.0.0"].Depends
+	if diff := cmp.Diff([]string{"libc6 (>= 2.31)", "libbar | libbaz"}, deps); diff != "" {
+		t.Fatalf("unexpected depends (-want +got):\n%s", diff)
+	}
+	pre := fooVersions["1.0.0"].PreDepends
+	if diff := cmp.Diff([]string{"dpkg (>= 1.19)"}, pre); diff != "" {
+		t.Fatalf("unexpected pre-depends (-want +got):\n%s", diff)
+	}
+	provides := fooVersions["1.0.0"].Provides
+	if diff := cmp.Diff([]string{"foo-virtual"}, provides); diff != "" {
+		t.Fatalf("unexpected provides (-want +got):\n%s", diff)
 	}
 }
 

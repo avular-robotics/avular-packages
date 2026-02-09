@@ -8,6 +8,7 @@ import (
 
 type RepoIndexPort interface {
 	AvailableVersions(depType types.DependencyType, name string) ([]string, error)
+	AptPackages() (map[string][]types.AptPackageVersion, error)
 }
 
 type RepoSnapshotPort interface {

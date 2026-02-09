@@ -28,6 +28,28 @@ func TestOutputFileAdapterFormats(t *testing.T) {
 		t.Fatalf("unexpected apt.lock content (-want +got):\n%s", diff)
 	}
 
+	err = adapter.WriteAptPreferences([]types.AptLockEntry{
+		{Package: "libb", Version: "2.0.0"},
+		{Package: "liba", Version: "1.0.0"},
+	})
+	require.NoError(t, err)
+	preferences, err := os.ReadFile(filepath.Join(dir, "apt.preferences"))
+	require.NoError(t, err)
+	if diff := cmp.Diff(true, strings.Contains(string(preferences), "Package: liba")); diff != "" {
+		t.Fatalf("unexpected apt.preferences content (-want +got):\n%s", diff)
+	}
+
+	err = adapter.WriteAptInstallList([]types.AptLockEntry{
+		{Package: "libb", Version: "2.0.0"},
+		{Package: "liba", Version: "1.0.0"},
+	})
+	require.NoError(t, err)
+	installList, err := os.ReadFile(filepath.Join(dir, "apt.install"))
+	require.NoError(t, err)
+	if diff := cmp.Diff("apt-get install -y liba=1.0.0 libb=2.0.0", strings.TrimSpace(string(installList))); diff != "" {
+		t.Fatalf("unexpected apt.install content (-want +got):\n%s", diff)
+	}
+
 	err = adapter.WriteBundleManifest([]types.BundleManifestEntry{
 		{Group: "g1", Mode: types.PackagingModeMetaBundle, Package: "pkg", Version: "1.0.0"},
 	})
@@ -41,6 +63,16 @@ func TestOutputFileAdapterFormats(t *testing.T) {
 		CreatedAt:      "2026-01-27T00:00:00Z",
 	})
 	require.NoError(t, err)
+
+	err = adapter.WriteSnapshotSources(types.SnapshotIntent{
+		SnapshotID: "pfx-123",
+	}, "https://packages.example.com/debian/avular", "main", []string{"amd64", "arm64"})
+	require.NoError(t, err)
+	sources, err := os.ReadFile(filepath.Join(dir, "snapshot.sources.list"))
+	require.NoError(t, err)
+	if diff := cmp.Diff(true, strings.Contains(string(sources), "deb [arch=amd64,arm64] https://packages.example.com/debian/avular pfx-123 main")); diff != "" {
+		t.Fatalf("unexpected snapshot.sources.list content (-want +got):\n%s", diff)
+	}
 
 	intent, err := os.ReadFile(filepath.Join(dir, "snapshot.intent"))
 	require.NoError(t, err)

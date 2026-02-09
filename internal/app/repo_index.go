@@ -26,6 +26,8 @@ func (s Service) RepoIndex(ctx context.Context, req RepoIndexRequest) (RepoIndex
 		HTTPTimeoutSec:   req.HTTPTimeoutSec,
 		HTTPRetries:      req.HTTPRetries,
 		HTTPRetryDelayMs: req.HTTPRetryDelayMs,
+		CacheDir:         strings.TrimSpace(req.CacheDir),
+		CacheTTLMinutes:  req.CacheTTLMinutes,
 	}
 	index, err := s.RepoIndexBuild.Build(ctx, buildRequest)
 	if err != nil {

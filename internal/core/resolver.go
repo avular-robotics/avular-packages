@@ -15,8 +15,9 @@ import (
 )
 
 type ResolverCore struct {
-	RepoIndex ports.RepoIndexPort
-	Policy    ports.PolicyPort
+	RepoIndex    ports.RepoIndexPort
+	Policy       ports.PolicyPort
+	UseAptSolver bool
 }
 
 type ResolveResult struct {
@@ -47,6 +48,8 @@ func (r ResolverCore) Resolve(ctx context.Context, deps []types.Dependency, dire
 		Resolution: types.ResolutionReport{Records: []types.ResolutionRecord{}},
 	}
 
+	aptSolverDeps := map[string]types.Dependency{}
+	aptSolverGroups := map[string]types.PackagingGroup{}
 	for _, dep := range merged {
 		group, err := r.Policy.ResolvePackagingMode(dep.Type, dep.Name)
 		if err != nil {
@@ -56,6 +59,20 @@ func (r ResolverCore) Resolve(ctx context.Context, deps []types.Dependency, dire
 		if err != nil {
 			return ResolveResult{}, err
 		}
+		if r.UseAptSolver && dep.Type == types.DependencyTypeApt {
+			updated, record, err := r.prepareDependency(pinned, directiveMap)
+			if err != nil {
+				return ResolveResult{}, err
+			}
+			if record.Action != "" {
+				result.Resolution.Records = append(result.Resolution.Records, record)
+			}
+			key := normalizeDirectiveKey(fmt.Sprintf("%s:%s", updated.Type, updated.Name))
+			aptSolverDeps[key] = updated
+			aptSolverGroups[updated.Name] = group
+			continue
+		}
+
 		version, record, err := r.resolveDependency(ctx, pinned, directiveMap)
 		if err != nil {
 			return ResolveResult{}, err
@@ -83,12 +100,66 @@ func (r ResolverCore) Resolve(ctx context.Context, deps []types.Dependency, dire
 		})
 	}
 
+	if r.UseAptSolver && len(aptSolverDeps) > 0 {
+		solved, err := resolveAptWithSolver(ctx, r.RepoIndex, mapValues(aptSolverDeps))
+		if err != nil {
+			return ResolveResult{}, err
+		}
+		lockSet := map[string]string{}
+		for _, entry := range result.AptLocks {
+			lockSet[entry.Package] = entry.Version
+		}
+		for name, version := range solved {
+			lockSet[name] = version
+			result.ResolvedDeps = append(result.ResolvedDeps, types.ResolvedDependency{
+				Type:    types.DependencyTypeApt,
+				Package: name,
+				Version: version,
+			})
+		}
+		result.AptLocks = result.AptLocks[:0]
+		for name, version := range lockSet {
+			result.AptLocks = append(result.AptLocks, types.AptLockEntry{
+				Package: name,
+				Version: version,
+			})
+		}
+		for _, dep := range aptSolverDeps {
+			version, ok := solved[dep.Name]
+			if !ok {
+				continue
+			}
+			group, ok := aptSolverGroups[dep.Name]
+			if !ok {
+				continue
+			}
+			result.BundleManifest = append(result.BundleManifest, types.BundleManifestEntry{
+				Group:   group.Name,
+				Mode:    group.Mode,
+				Package: dep.Name,
+				Version: version,
+			})
+		}
+	}
+
 	sort.Slice(result.AptLocks, func(i, j int) bool {
 		return result.AptLocks[i].Package < result.AptLocks[j].Package
 	})
 
 	log.Ctx(ctx).Debug().Int("resolved", len(result.AptLocks)).Msg("resolver completed")
 	return result, nil
+}
+
+func (r ResolverCore) prepareDependency(dep types.Dependency, directiveMap map[string]types.ResolutionDirective) (types.Dependency, types.ResolutionRecord, error) {
+	directive, ok := directiveFor(dep, directiveMap)
+	if !ok {
+		return dep, types.ResolutionRecord{}, nil
+	}
+	updated, record, err := policies.ApplyResolution(dep, directive)
+	if err != nil {
+		return types.Dependency{}, record, err
+	}
+	return updated, record, nil
 }
 
 func (r ResolverCore) resolveDependency(ctx context.Context, dep types.Dependency, directiveMap map[string]types.ResolutionDirective) (string, types.ResolutionRecord, error) {
@@ -254,6 +325,14 @@ func normalizeDebPackageName(value string) string {
 	normalized := strings.ToLower(strings.TrimSpace(value))
 	normalized = strings.ReplaceAll(normalized, "_", "-")
 	return normalized
+}
+
+func mapValues(values map[string]types.Dependency) []types.Dependency {
+	out := make([]types.Dependency, 0, len(values))
+	for _, dep := range values {
+		out = append(out, dep)
+	}
+	return out
 }
 
 func constraintPriority(source string) int {

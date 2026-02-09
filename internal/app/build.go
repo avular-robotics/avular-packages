@@ -28,13 +28,20 @@ func (s Service) Build(ctx context.Context, req BuildRequest) (BuildResult, erro
 				WithMsg("product, repo_index, and target_ubuntu are required when running resolve in build")
 		}
 		_, err := s.Resolve(ctx, ResolveRequest{
-			ProductPath:  productPath,
-			Profiles:     req.Profiles,
-			Workspace:    req.Workspace,
-			RepoIndex:    repoIndex,
-			OutputDir:    outputDir,
-			TargetUbuntu: targetUbuntu,
-			CompatGet:    true,
+			ProductPath:          productPath,
+			Profiles:             req.Profiles,
+			Workspace:            req.Workspace,
+			RepoIndex:            repoIndex,
+			OutputDir:            outputDir,
+			TargetUbuntu:         targetUbuntu,
+			CompatGet:            true,
+			EmitAptPreferences:   req.EmitAptPreferences,
+			EmitAptInstallList:   req.EmitAptInstallList,
+			EmitSnapshotSources:  req.EmitSnapshotSources,
+			SnapshotAptBaseURL:   req.SnapshotAptBaseURL,
+			SnapshotAptComponent: req.SnapshotAptComponent,
+			SnapshotAptArchs:     req.SnapshotAptArchs,
+			AptSatSolver:         req.AptSatSolver,
 		})
 		if err != nil {
 			return BuildResult{}, err
