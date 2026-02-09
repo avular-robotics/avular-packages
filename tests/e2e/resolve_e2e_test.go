@@ -7,10 +7,12 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"avular-packages/tests/testutil"
 )
 
 func TestResolveCommandE2E(t *testing.T) {
-	root := repoRoot(t)
+	root := testutil.RepoRoot(t)
 	outDir := t.TempDir()
 
 	cmd := exec.Command("go", "run", "./cmd/avular-packages", "resolve",
@@ -31,8 +33,3 @@ func TestResolveCommandE2E(t *testing.T) {
 	require.FileExists(t, filepath.Join(outDir, "resolution.report"))
 }
 
-func repoRoot(t *testing.T) string {
-	dir, err := os.Getwd()
-	require.NoError(t, err)
-	return filepath.Clean(filepath.Join(dir, "..", ".."))
-}

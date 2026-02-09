@@ -228,8 +228,7 @@ func TestE2ERealWorkspaceWithTestcontainers(t *testing.T) {
 	endpoint, cleanup := startProGetMock(ctx, t)
 	t.Cleanup(cleanup)
 
-	repoRoot, err := repoRootPath()
-	require.NoError(t, err)
+	repoRoot := testutil.RepoRoot(t)
 	productPath := filepath.Join(repoRoot, "fixtures", "e2e-product.yaml")
 	profilePath := filepath.Join(repoRoot, "fixtures", "e2e-profile.yaml")
 
@@ -592,13 +591,6 @@ publish:
 `, filepath.Base(profilePath), profilePath)
 }
 
-func repoRootPath() (string, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Clean(filepath.Join(cwd, "..", "..")), nil
-}
 
 func countDebs(dir string) (int, error) {
 	entries, err := os.ReadDir(dir)
