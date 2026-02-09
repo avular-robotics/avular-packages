@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -69,8 +70,22 @@ func (s Service) Resolve(ctx context.Context, req ResolveRequest) (ResolveResult
 		return ResolveResult{}, err
 	}
 
-	// Merge CLI schema files with spec-level ones (CLI appended last = highest precedence)
+	// Auto-discover schemas from a schemas/ directory next to the product spec.
+	// These sit between inline schemas (lowest) and explicit schema_files (higher).
+	discoveredSchemas := discoverSchemaFiles(productPath)
+
+	// Build the final schema files list with correct precedence:
+	//   1. Inline schema  (handled by builder, lowest)
+	//   2. Auto-discovered ./schemas/*.yaml
+	//   3. Explicit schema_files from spec
+	//   4. CLI --schema flags (highest)
 	resolveInputs := composed.Inputs
+	if len(discoveredSchemas) > 0 {
+		resolveInputs.PackageXML.SchemaFiles = append(
+			discoveredSchemas,
+			resolveInputs.PackageXML.SchemaFiles...,
+		)
+	}
 	if len(req.SchemaFiles) > 0 {
 		resolveInputs.PackageXML.SchemaFiles = append(
 			resolveInputs.PackageXML.SchemaFiles,
@@ -78,10 +93,12 @@ func (s Service) Resolve(ctx context.Context, req ResolveRequest) (ResolveResult
 		)
 	}
 
-	// Collect inline schema from product spec (composed spec inherits it)
+	// Collect inline schema from the composed spec.  The composer
+	// merges schemas from all profiles and the product (product wins
+	// per key), so this captures the fully-merged inline schema.
 	var inlineSchema *types.SchemaFile
-	if product.Schema != nil && len(product.Schema.Mappings) > 0 {
-		inlineSchema = product.Schema
+	if composed.Schema != nil && len(composed.Schema.Mappings) > 0 {
+		inlineSchema = composed.Schema
 	}
 
 	builder := core.NewDependencyBuilder(s.Workspace, s.PackageXML)
@@ -202,6 +219,38 @@ func discoverProduct() string {
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
+}
+
+// discoverSchemaFiles looks for a schemas/ directory next to the
+// product spec and returns sorted paths to any .yaml/.yml files found.
+// Returns nil if no schemas directory exists or it contains no files.
+func discoverSchemaFiles(productPath string) []string {
+	if productPath == "" {
+		return nil
+	}
+	dir := filepath.Dir(productPath)
+	schemasDir := filepath.Join(dir, "schemas")
+	info, err := os.Stat(schemasDir)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	entries, err := os.ReadDir(schemasDir)
+	if err != nil {
+		return nil
+	}
+
+	var paths []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml") {
+			paths = append(paths, filepath.Join(schemasDir, name))
+		}
+	}
+	sort.Strings(paths)
+	return paths
 }
 
 func buildSnapshotIntent(repo types.PublishRepository, snapshotID string, clock func() time.Time) types.SnapshotIntent {

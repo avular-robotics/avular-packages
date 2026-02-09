@@ -61,7 +61,7 @@ func (c ProductComposer) Compose(ctx context.Context, product types.Spec, profil
 }
 
 // mergeSpec layers an incoming spec's inputs, packaging groups,
-// resolutions, and publish settings onto the target.
+// resolutions, publish settings, and inline schema onto the target.
 func mergeSpec(target *types.Spec, incoming types.Spec) error {
 	mergeInputs(&target.Inputs, incoming.Inputs)
 	if err := mergePackagingGroups(&target.Packaging, incoming.Packaging); err != nil {
@@ -71,7 +71,29 @@ func mergeSpec(target *types.Spec, incoming types.Spec) error {
 	if incoming.Publish.Repository.Name != "" {
 		target.Publish = incoming.Publish
 	}
+	mergeSchema(target, incoming)
 	return nil
+}
+
+// mergeSchema merges an incoming spec's inline schema into the target.
+// Keys in the incoming schema override existing entries (last-write wins),
+// matching the same layering semantics as file-based schemas.
+func mergeSchema(target *types.Spec, incoming types.Spec) {
+	if incoming.Schema == nil || len(incoming.Schema.Mappings) == 0 {
+		return
+	}
+	if target.Schema == nil {
+		target.Schema = &types.SchemaFile{
+			SchemaVersion: incoming.Schema.SchemaVersion,
+			Mappings:      make(map[string]types.SchemaMapping),
+		}
+	}
+	for key, mapping := range incoming.Schema.Mappings {
+		target.Schema.Mappings[key] = mapping
+	}
+	if incoming.Schema.SchemaVersion != "" {
+		target.Schema.SchemaVersion = incoming.Schema.SchemaVersion
+	}
 }
 
 // mergeInputs appends incoming manual dependencies and package_xml tags
