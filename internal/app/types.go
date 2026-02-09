@@ -87,6 +87,31 @@ type PublishResult struct {
 	SnapshotID string
 }
 
+type PruneRequest struct {
+	RepoBackend        string
+	RepoDir            string
+	KeepLast           int
+	KeepDays           int
+	ProtectChannels    []string
+	ProtectPrefixes    []string
+	DryRun             bool
+	ProGetEndpoint     string
+	ProGetFeed         string
+	ProGetComponent    string
+	ProGetUser         string
+	ProGetAPIKey       string
+	ProGetTimeoutSec   int
+	ProGetRetries      int
+	ProGetRetryDelayMs int
+}
+
+type PruneResult struct {
+	KeepCount   int
+	DeleteCount int
+	Deleted     []string
+	DryRun      bool
+}
+
 type RepoIndexRequest struct {
 	Output           string
 	AptSources       []string

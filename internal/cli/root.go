@@ -54,6 +54,7 @@ func newRootCommand() *cobra.Command {
 	cmd.AddCommand(newPublishCommand())
 	cmd.AddCommand(newInspectCommand())
 	cmd.AddCommand(newRepoIndexCommand())
+	cmd.AddCommand(newPruneCommand())
 	return cmd
 }
 

@@ -125,7 +125,7 @@ Every dependency group must declare its packaging mode explicitly. No defaults.
 Use a ProGet Debian feed as the primary runtime repository, with:
 - Signed Release metadata managed by ProGet feed keys.
 - Snapshot-style distributions using `snapshot_prefix` + `snapshot_id`.
-- Old snapshot distributions pruned by retention policy.
+- Old snapshot distributions pruned by retention policy and the prune tooling.
 - Promotion workflow (dev → staging → prod) via distribution updates.
 - Snapshot IDs referenced in `snapshot.intent` and product specs.
 - `signing_key` in specs is used for aptly; ProGet signing is configured at the feed level.
@@ -139,28 +139,39 @@ Use aptly only as a **weekly upstream mirror** (not a primary publish backend).
 - Devcontainer provides the full toolchain (Go + packaging tooling).
 - `just` defines standard workflows (resolve, lock, build, publish, validate).
 
-## 13) Migration Plan (High-Level)
+## 13) Operational Runbook (Snapshot Pruning)
+- Recommended cadence: daily for dev snapshots, weekly for staging, monthly for prod.
+- Always protect channel distributions (e.g., dev, staging, prod) from deletion.
+- Prefer dry-run first, then execute deletion once the plan is reviewed.
+- Verify ProGet state by listing distributions before and after prune.
+- Example (ProGet):
+  - `avular-packages prune --repo-backend proget --proget-endpoint ... --proget-feed ... --protect-channel dev --protect-channel staging --protect-channel prod --keep-days 30 --keep-last 10 --dry-run`
+  - Repeat without `--dry-run` to apply deletions.
+
+## 14) Migration Plan (High-Level)
 1) Introduce resolver and lockfiles in CI for a pilot product.
 2) Switch devcontainers to install from snapshots.
 3) Package Python dependencies as debs, publish to apt repo.
 4) Deprecate separate pip channel and rosdep mapping repo.
 5) Retire old tooling once compatible replacements are stable.
 
-## 14) Risks and Mitigations
+## 15) Risks and Mitigations
 - **Risk:** Conflicting constraints across profiles.
   - **Mitigation:** explicit resolution directives and fail-closed.
 - **Risk:** Migration breaks CI tooling.
   - **Mitigation:** compatibility wrappers for `get-dependencies`.
 - **Risk:** Python packaging overhead.
   - **Mitigation:** automated build/publish pipeline with caching.
+- **Risk:** Snapshot storage growth.
+  - **Mitigation:** retention policy with automated prune tooling.
 
-## 15) Open Questions
+## 16) Open Questions
 - None. All major decisions have been locked by stakeholder input.
 
-## 16) Long-Term Alternatives
+## 17) Long-Term Alternatives
 - See `docs/alternatives-nix-conda.md` for a Nix/Conda-style design note and decision criteria.
 
-## 17) Implementation Status
+## 18) Implementation Status
 - Resolver, spec compiler, composition, and file adapters are implemented.
 - Build supports Python deb packaging (individual/meta/fat) and optional internal deb builds.
 - Publish supports file backend (dev), ProGet publishing (primary), and aptly-backed snapshot publishing (mirror/ops).

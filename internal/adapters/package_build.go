@@ -469,7 +469,7 @@ func readPipMetadata(targetDir string) (map[string]pipMetadata, error) {
 		normalized := normalizePipName(name)
 		metadata[normalized] = pipMetadata{
 			Name:     name,
-			Version: version,
+			Version:  version,
 			Requires: requires,
 		}
 	}

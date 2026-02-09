@@ -54,16 +54,21 @@ No default mode is allowed. Validation **MUST** fail if a mode is missing.
 - The system **MUST** support dev → staging → prod promotion with no rebuilds via distribution updates.
 - Installers **MUST** reference snapshot distributions or promoted channels, not mutable ad-hoc sources.
 
-## 8) Python Dependency Channel Policy
+## 8) Snapshot Retention and Storage
+- Snapshot storage grows linearly without pruning. A retention policy **MUST** be enforced for frequent releases.
+- The system **SHOULD** provide a pruning mechanism to delete obsolete snapshots.
+- Deduplication is achieved by reusing package versions and pruning snapshots, not by APT itself.
+
+## 9) Python Dependency Channel Policy
 - The pip index **MUST NOT** be used as a runtime channel.
 - The pip index **MAY** be used as a build input to create debs.
 - All runtime Python dependencies **MUST** be installed from the apt repo.
 
-## 9) Compatibility Requirements
+## 10) Compatibility Requirements
 - The system **SHOULD** provide a compatibility wrapper for `get-dependencies` during migration.
 - The system **MAY** export rosdep-style mappings for legacy workflows.
 
-## 10) Security and Integrity
+## 11) Security and Integrity
 - Repository metadata **MUST** be signed.
 - Snapshots **MUST** be immutable once published.
 - The system **SHOULD** generate SBOMs in SPDX JSON and store them alongside snapshots.

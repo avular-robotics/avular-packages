@@ -31,6 +31,28 @@ dev:
 deps:
   @scripts/deps.sh {{go_version}}
 
+# Run all tests with race detector
+test *args='./...':
+  go test -race -count=1 {{args}}
+
+# Run tests with coverage report
+cover:
+  go test -race -count=1 -coverprofile=coverage.out ./...
+  go tool cover -func=coverage.out | tail -1
+  @echo "HTML report: go tool cover -html=coverage.out -o coverage.html"
+
+# Run linter (go vet + golangci-lint if available)
+lint:
+  go vet ./...
+  @command -v golangci-lint >/dev/null 2>&1 && golangci-lint run || echo "golangci-lint not installed, skipping (install: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest)"
+
+# Format all Go source files
+fmt:
+  go fmt ./...
+
+# Run all checks (fmt, vet, test)
+check: fmt lint test
+
 default: validate
 
 validate:

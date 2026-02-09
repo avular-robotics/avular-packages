@@ -97,3 +97,37 @@ func TestRepoSnapshotFileAdapterPromote(t *testing.T) {
 		})
 	}
 }
+
+func TestRepoSnapshotFileAdapterListSnapshots(t *testing.T) {
+	dir := t.TempDir()
+	adapter := NewRepoSnapshotFileAdapter(dir)
+	ctx := t.Context()
+
+	require.NoError(t, adapter.Publish(ctx, "snap-1"))
+	require.NoError(t, adapter.Publish(ctx, "snap-2"))
+	require.NoError(t, adapter.Promote(ctx, "snap-2", "staging"))
+
+	snapshots, err := adapter.ListSnapshots(ctx)
+	require.NoError(t, err)
+	require.Len(t, snapshots, 2)
+
+	var hasChannel bool
+	for _, snapshot := range snapshots {
+		if snapshot.SnapshotID == "snap-2" && snapshot.Channel == "staging" {
+			hasChannel = true
+		}
+	}
+	require.True(t, hasChannel)
+}
+
+func TestRepoSnapshotFileAdapterDeleteSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	adapter := NewRepoSnapshotFileAdapter(dir)
+	ctx := t.Context()
+
+	require.NoError(t, adapter.Publish(ctx, "snap-1"))
+	require.NoError(t, adapter.DeleteSnapshot(ctx, "snap-1"))
+
+	_, err := os.Stat(filepath.Join(dir, "snapshots", "snap-1.snapshot"))
+	require.Error(t, err)
+}

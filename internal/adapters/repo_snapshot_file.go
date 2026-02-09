@@ -152,6 +152,9 @@ func (a RepoSnapshotFileAdapter) ListSnapshots(ctx context.Context) ([]types.Sna
 			CreatedAt:  info.ModTime().UTC(),
 		})
 	}
+	if err := applyChannelMappings(a.Dir, snapshots); err != nil {
+		return nil, err
+	}
 	return snapshots, nil
 }
 
@@ -185,6 +188,45 @@ func (a RepoSnapshotFileAdapter) DeleteSnapshot(ctx context.Context, snapshotID 
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("failed to delete snapshot").
 			WithCause(err)
+	}
+	return nil
+}
+
+func applyChannelMappings(root string, snapshots []types.SnapshotInfo) error {
+	channelsDir := filepath.Join(root, "channels")
+	entries, err := os.ReadDir(channelsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return errbuilder.New().
+			WithCode(errbuilder.CodeInternal).
+			WithMsg("failed to read channels directory").
+			WithCause(err)
+	}
+	mapping := map[string]string{}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(channelsDir, entry.Name())
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return errbuilder.New().
+				WithCode(errbuilder.CodeInternal).
+				WithMsg("failed to read channel pointer").
+				WithCause(err)
+		}
+		snapshotID := strings.TrimSpace(string(content))
+		if snapshotID == "" {
+			continue
+		}
+		mapping[snapshotID] = entry.Name()
+	}
+	for i := range snapshots {
+		if channel, ok := mapping[snapshots[i].SnapshotID]; ok {
+			snapshots[i].Channel = channel
+		}
 	}
 	return nil
 }

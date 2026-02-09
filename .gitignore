@@ -3,3 +3,5 @@ out/
 dist/
 .venv/
 .venv-build/
+coverage.out
+coverage.html

@@ -197,7 +197,7 @@ func parseAptDepSpec(value string) aptDepSpec {
 	if before, after, ok := strings.Cut(raw, "("); ok {
 		name = strings.TrimSpace(before)
 		constraintPart = strings.TrimSpace(after)
-		if before, ok :=strings.CutSuffix(constraintPart, ")"); ok  {
+		if before, ok := strings.CutSuffix(constraintPart, ")"); ok {
 			constraintPart = before
 		}
 	}
