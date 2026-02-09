@@ -290,30 +290,112 @@ func fetchAptPackages(ctx context.Context, url string, user string, apiKey strin
 	return index, false, nil
 }
 
-//nolint:gocyclo // APT Packages file parser inherently branches on many field names
+// aptStanza accumulates fields for a single APT package stanza while
+// the Packages file is being parsed line by line.
+type aptStanza struct {
+	name          string
+	version       string
+	dependsRaw    string
+	preDependsRaw string
+	providesRaw   string
+	lastField     string
+}
+
+// reset clears all fields so the stanza can be reused for the next
+// package entry.
+func (s *aptStanza) reset() {
+	s.name = ""
+	s.version = ""
+	s.dependsRaw = ""
+	s.preDependsRaw = ""
+	s.providesRaw = ""
+	s.lastField = ""
+}
+
+// flush writes the accumulated stanza into the packages map if both
+// name and version are present.
+func (s *aptStanza) flush(packages map[string]map[string]types.AptPackageVersion) {
+	if s.name == "" || s.version == "" {
+		return
+	}
+	if packages[s.name] == nil {
+		packages[s.name] = map[string]types.AptPackageVersion{}
+	}
+	packages[s.name][s.version] = types.AptPackageVersion{
+		Version:    s.version,
+		Depends:    parseAptDependencyField(s.dependsRaw),
+		PreDepends: parseAptDependencyField(s.preDependsRaw),
+		Provides:   parseAptDependencyField(s.providesRaw),
+	}
+}
+
+// processLine dispatches a single non-empty line to the correct stanza
+// field. Continuation lines (leading whitespace) append to the most
+// recently seen field.
+func (s *aptStanza) processLine(line string) {
+	if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+		s.appendContinuation(strings.TrimSpace(line))
+		return
+	}
+	if field, value, ok := parseStanzaField(line); ok {
+		s.setField(field, value)
+	}
+}
+
+// appendContinuation joins a folded continuation value to whichever
+// field was most recently seen.
+func (s *aptStanza) appendContinuation(value string) {
+	switch s.lastField {
+	case "Depends":
+		s.dependsRaw = joinField(s.dependsRaw, value)
+	case "Pre-Depends":
+		s.preDependsRaw = joinField(s.preDependsRaw, value)
+	case "Provides":
+		s.providesRaw = joinField(s.providesRaw, value)
+	}
+}
+
+// setField stores a top-level field value and records it as the last
+// field seen (for continuation line handling).
+func (s *aptStanza) setField(field string, value string) {
+	s.lastField = field
+	switch field {
+	case "Package":
+		s.name = value
+	case "Version":
+		s.version = value
+	case "Depends":
+		s.dependsRaw = value
+	case "Pre-Depends":
+		s.preDependsRaw = value
+	case "Provides":
+		s.providesRaw = value
+	}
+}
+
+// stanzaFields lists the APT Packages file fields we care about.
+var stanzaFields = []string{"Package:", "Version:", "Depends:", "Pre-Depends:", "Provides:"}
+
+// parseStanzaField checks whether line starts with a known field prefix
+// and returns the field name and trimmed value.
+func parseStanzaField(line string) (field string, value string, ok bool) {
+	for _, prefix := range stanzaFields {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSuffix(prefix, ":"),
+				strings.TrimSpace(strings.TrimPrefix(line, prefix)),
+				true
+		}
+	}
+	return "", "", false
+}
+
+// parseAptPackages reads an APT Packages file from reader and returns
+// a two-level map: package name -> version string -> AptPackageVersion.
 func parseAptPackages(reader io.Reader) (map[string]map[string]types.AptPackageVersion, error) {
 	packages := map[string]map[string]types.AptPackageVersion{}
 	buffered := bufio.NewReader(reader)
-	var name string
-	var version string
-	var dependsRaw string
-	var preDependsRaw string
-	var providesRaw string
-	var lastField string
-	flush := func() {
-		if name == "" || version == "" {
-			return
-		}
-		if packages[name] == nil {
-			packages[name] = map[string]types.AptPackageVersion{}
-		}
-		packages[name][version] = types.AptPackageVersion{
-			Version:    version,
-			Depends:    parseAptDependencyField(dependsRaw),
-			PreDepends: parseAptDependencyField(preDependsRaw),
-			Provides:   parseAptDependencyField(providesRaw),
-		}
-	}
+	var stanza aptStanza
+
 	for {
 		line, err := buffered.ReadString('\n')
 		if err != nil && err != io.EOF {
@@ -322,80 +404,22 @@ func parseAptPackages(reader io.Reader) (map[string]map[string]types.AptPackageV
 				WithMsg("failed to read apt packages").
 				WithCause(err)
 		}
+
 		line = strings.TrimRight(line, "\r\n")
+
 		if strings.TrimSpace(line) == "" {
-			flush()
-			name = ""
-			version = ""
-			dependsRaw = ""
-			preDependsRaw = ""
-			providesRaw = ""
-			lastField = ""
-			if err == io.EOF {
-				break
-			}
-			continue
+			stanza.flush(packages)
+			stanza.reset()
+		} else {
+			stanza.processLine(line)
 		}
-		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
-			continued := strings.TrimSpace(line)
-			switch lastField {
-			case "Depends":
-				dependsRaw = joinField(dependsRaw, continued)
-			case "Pre-Depends":
-				preDependsRaw = joinField(preDependsRaw, continued)
-			case "Provides":
-				providesRaw = joinField(providesRaw, continued)
-			}
-			if err == io.EOF {
-				break
-			}
-			continue
-		}
-		if strings.HasPrefix(line, "Package:") {
-			name = strings.TrimSpace(strings.TrimPrefix(line, "Package:"))
-			lastField = "Package"
-			if err == io.EOF {
-				break
-			}
-			continue
-		}
-		if strings.HasPrefix(line, "Version:") {
-			version = strings.TrimSpace(strings.TrimPrefix(line, "Version:"))
-			lastField = "Version"
-			if err == io.EOF {
-				break
-			}
-			continue
-		}
-		if strings.HasPrefix(line, "Depends:") {
-			dependsRaw = strings.TrimSpace(strings.TrimPrefix(line, "Depends:"))
-			lastField = "Depends"
-			if err == io.EOF {
-				break
-			}
-			continue
-		}
-		if strings.HasPrefix(line, "Pre-Depends:") {
-			preDependsRaw = strings.TrimSpace(strings.TrimPrefix(line, "Pre-Depends:"))
-			lastField = "Pre-Depends"
-			if err == io.EOF {
-				break
-			}
-			continue
-		}
-		if strings.HasPrefix(line, "Provides:") {
-			providesRaw = strings.TrimSpace(strings.TrimPrefix(line, "Provides:"))
-			lastField = "Provides"
-			if err == io.EOF {
-				break
-			}
-			continue
-		}
+
 		if err == io.EOF {
 			break
 		}
 	}
-	flush()
+
+	stanza.flush(packages)
 	return packages, nil
 }
 
