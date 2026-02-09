@@ -65,5 +65,4 @@ func loadProfiles(adapter adapters.SpecFileAdapter, product types.Spec, root str
 	return profiles, nil
 }
 
-
 var errUnsupportedComposeSource = os.ErrInvalid

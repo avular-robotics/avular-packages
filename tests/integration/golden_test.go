@@ -13,8 +13,8 @@ import (
 	"avular-packages/internal/adapters"
 	"avular-packages/internal/core"
 	"avular-packages/internal/policies"
-	"avular-packages/tests/testutil"
 	"avular-packages/internal/types"
+	"avular-packages/tests/testutil"
 )
 
 // TestGoldenResolve performs a full resolve using the sample fixtures and

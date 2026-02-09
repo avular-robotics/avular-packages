@@ -32,4 +32,3 @@ func TestResolveCommandE2E(t *testing.T) {
 	require.FileExists(t, filepath.Join(outDir, "snapshot.intent"))
 	require.FileExists(t, filepath.Join(outDir, "resolution.report"))
 }
-
