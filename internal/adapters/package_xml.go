@@ -10,6 +10,7 @@ import (
 	"github.com/ZanzyTHEbar/errbuilder-go"
 
 	"avular-packages/internal/ports"
+	"avular-packages/internal/types"
 )
 
 type PackageXMLAdapter struct {
@@ -24,6 +25,14 @@ func NewPackageXMLAdapter() *PackageXMLAdapter {
 type packageXML struct {
 	Name   string        `xml:"name"`
 	Export exportSection `xml:"export"`
+
+	// Standard ROS dependency tags (REP-149 / REP-140)
+	Depend         []simpleDepend `xml:"depend"`
+	ExecDepend     []simpleDepend `xml:"exec_depend"`
+	BuildDepend    []simpleDepend `xml:"build_depend"`
+	BuildExportDep []simpleDepend `xml:"build_export_depend"`
+	RunDepend      []simpleDepend `xml:"run_depend"`
+	TestDepend     []simpleDepend `xml:"test_depend"`
 }
 
 type exportSection struct {
@@ -44,6 +53,7 @@ type packageXMLCacheEntry struct {
 	modTime    time.Time
 	debianDeps []string
 	pipDeps    []string
+	rosTagDeps []types.ROSTagDependency
 	name       string
 }
 
@@ -73,6 +83,18 @@ func (a *PackageXMLAdapter) ParseDependencies(paths []string, tags []string) ([]
 	}
 
 	return debs, pips, nil
+}
+
+func (a *PackageXMLAdapter) ParseROSTags(paths []string) ([]types.ROSTagDependency, error) {
+	var result []types.ROSTagDependency
+	for _, path := range paths {
+		entry, err := a.loadPackageXML(path)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, entry.rosTagDeps...)
+	}
+	return result, nil
 }
 
 func (a *PackageXMLAdapter) ParsePackageNames(paths []string) ([]string, error) {
@@ -139,10 +161,53 @@ func (a *PackageXMLAdapter) loadPackageXML(path string) (packageXMLCacheEntry, e
 		}
 		entry.pipDeps = append(entry.pipDeps, value)
 	}
+
+	// Extract standard ROS dependency tags as abstract keys
+	entry.rosTagDeps = collectROSTags(&pkg)
+
 	a.mu.Lock()
 	a.cache[path] = entry
 	a.mu.Unlock()
 	return entry, nil
+}
+
+// collectROSTags extracts all standard ROS dependency tags from the
+// parsed package.xml and returns them as ROSTagDependency entries.
+func collectROSTags(pkg *packageXML) []types.ROSTagDependency {
+	var deps []types.ROSTagDependency
+
+	for _, dep := range pkg.Depend {
+		if key := strings.TrimSpace(dep.Value); key != "" {
+			deps = append(deps, types.ROSTagDependency{Key: key, Scope: types.ROSDepScopeAll})
+		}
+	}
+	for _, dep := range pkg.ExecDepend {
+		if key := strings.TrimSpace(dep.Value); key != "" {
+			deps = append(deps, types.ROSTagDependency{Key: key, Scope: types.ROSDepScopeExec})
+		}
+	}
+	for _, dep := range pkg.BuildDepend {
+		if key := strings.TrimSpace(dep.Value); key != "" {
+			deps = append(deps, types.ROSTagDependency{Key: key, Scope: types.ROSDepScopeBuild})
+		}
+	}
+	for _, dep := range pkg.BuildExportDep {
+		if key := strings.TrimSpace(dep.Value); key != "" {
+			deps = append(deps, types.ROSTagDependency{Key: key, Scope: types.ROSDepScopeBuildExec})
+		}
+	}
+	for _, dep := range pkg.RunDepend {
+		if key := strings.TrimSpace(dep.Value); key != "" {
+			deps = append(deps, types.ROSTagDependency{Key: key, Scope: types.ROSDepScopeExec})
+		}
+	}
+	for _, dep := range pkg.TestDepend {
+		if key := strings.TrimSpace(dep.Value); key != "" {
+			deps = append(deps, types.ROSTagDependency{Key: key, Scope: types.ROSDepScopeTest})
+		}
+	}
+
+	return deps
 }
 
 func hasTag(tags []string, name string) bool {

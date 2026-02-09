@@ -1,0 +1,13 @@
+schema_version: "v1"
+target: "ubuntu-22.04"
+mappings:
+  # Override numpy version from base schema
+  numpy:
+    type: pip
+    package: numpy
+    version: "==1.26.4"
+  # Add new mapping not in base
+  opencv:
+    type: apt
+    package: libopencv-dev
+    version: ">=4.5"

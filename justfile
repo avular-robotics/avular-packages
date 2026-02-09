@@ -1,5 +1,7 @@
 set shell := ["bash", "-cu"]
 
+go_version := "1.25.0"
+
 product := ""
 profiles := ""
 workspace := ""
@@ -20,6 +22,14 @@ internal_deb_dir := ""
 internal_src := ""
 target_ubuntu := ""
 snapshot_id := ""
+
+# Build and launch the devcontainer for interactive development
+dev:
+  @scripts/dev.sh
+
+# Install development dependencies on the host (Arch, Debian, Fedora)
+deps:
+  @scripts/deps.sh {{go_version}}
 
 default: validate
 

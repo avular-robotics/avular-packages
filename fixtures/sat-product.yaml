@@ -1,0 +1,24 @@
+api_version: "v1"
+kind: "product"
+metadata:
+  name: "sat-product"
+  version: "2026.02.09"
+  owners: ["platform"]
+compose:
+  - name: "sat-profile"
+    version: "2026.02.09"
+    source: "local"
+    path: "fixtures/sat-profile.yaml"
+inputs:
+  package_xml:
+    enabled: false
+    tags: []
+  manual:
+    apt:
+      - "app=1.0.0"
+publish:
+  repository:
+    name: "avular"
+    channel: "dev"
+    snapshot_prefix: "sat"
+    signing_key: "avular-release"

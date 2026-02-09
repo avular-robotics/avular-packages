@@ -2,9 +2,11 @@ package adapters
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	"github.com/ZanzyTHEbar/errbuilder-go"
 
 	"avular-packages/internal/ports"
+	"avular-packages/internal/types"
 )
 
 type RepoSnapshotProGetAdapter struct {
@@ -306,6 +309,184 @@ func listDebs(root string) ([]string, error) {
 			WithCause(err)
 	}
 	return debs, nil
+}
+
+func (a RepoSnapshotProGetAdapter) ListSnapshots(ctx context.Context) ([]types.SnapshotInfo, error) {
+	endpoint := strings.TrimRight(strings.TrimSpace(a.Endpoint), "/")
+	if endpoint == "" {
+		return nil, errbuilder.New().
+			WithCode(errbuilder.CodeInvalidArgument).
+			WithMsg("proget endpoint is empty")
+	}
+	if strings.TrimSpace(a.Feed) == "" {
+		return nil, errbuilder.New().
+			WithCode(errbuilder.CodeInvalidArgument).
+			WithMsg("proget feed is empty")
+	}
+	listURL := fmt.Sprintf("%s/api/debian/%s/distributions", endpoint, a.Feed)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, listURL, nil)
+	if err != nil {
+		return nil, errbuilder.New().
+			WithCode(errbuilder.CodeInternal).
+			WithMsg("failed to create proget list request").
+			WithCause(err)
+	}
+	a.applyBasicAuth(req)
+	client := &http.Client{Timeout: a.Timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, errbuilder.New().
+			WithCode(errbuilder.CodeInternal).
+			WithMsg("proget list snapshots failed").
+			WithCause(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, errbuilder.New().
+			WithCode(errbuilder.CodeInternal).
+			WithMsg("proget list snapshots failed").
+			WithCause(fmt.Errorf("status=%d url=%s response=%s", resp.StatusCode, listURL, strings.TrimSpace(string(body))))
+	}
+	snapshots, err := decodeProgetDistributions(body)
+	if err != nil {
+		return nil, err
+	}
+	return snapshots, nil
+}
+
+func (a RepoSnapshotProGetAdapter) DeleteSnapshot(ctx context.Context, snapshotID string) error {
+	endpoint := strings.TrimRight(strings.TrimSpace(a.Endpoint), "/")
+	if endpoint == "" {
+		return errbuilder.New().
+			WithCode(errbuilder.CodeInvalidArgument).
+			WithMsg("proget endpoint is empty")
+	}
+	if strings.TrimSpace(a.Feed) == "" {
+		return errbuilder.New().
+			WithCode(errbuilder.CodeInvalidArgument).
+			WithMsg("proget feed is empty")
+	}
+	trimmed := strings.TrimSpace(snapshotID)
+	if trimmed == "" {
+		return errbuilder.New().
+			WithCode(errbuilder.CodeInvalidArgument).
+			WithMsg("snapshot id is empty")
+	}
+	deleteURL := fmt.Sprintf("%s/api/debian/%s/distributions/%s", endpoint, a.Feed, url.PathEscape(trimmed))
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, deleteURL, nil)
+	if err != nil {
+		return errbuilder.New().
+			WithCode(errbuilder.CodeInternal).
+			WithMsg("failed to create proget delete request").
+			WithCause(err)
+	}
+	a.applyBasicAuth(req)
+	client := &http.Client{Timeout: a.Timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return errbuilder.New().
+			WithCode(errbuilder.CodeInternal).
+			WithMsg("proget delete snapshot failed").
+			WithCause(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return errbuilder.New().
+			WithCode(errbuilder.CodeInternal).
+			WithMsg("proget delete snapshot failed").
+			WithCause(fmt.Errorf("status=%d url=%s response=%s", resp.StatusCode, deleteURL, strings.TrimSpace(string(body))))
+	}
+	return nil
+}
+
+func (a RepoSnapshotProGetAdapter) applyBasicAuth(req *http.Request) {
+	if strings.TrimSpace(a.APIKey) == "" {
+		return
+	}
+	user := strings.TrimSpace(a.Username)
+	if user == "" {
+		user = "api"
+	}
+	req.SetBasicAuth(user, a.APIKey)
+}
+
+func decodeProgetDistributions(body []byte) ([]types.SnapshotInfo, error) {
+	var payload interface{}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, errbuilder.New().
+			WithCode(errbuilder.CodeInternal).
+			WithMsg("failed to parse proget distribution list").
+			WithCause(err)
+	}
+	items := extractDistributionItems(payload)
+	snapshots := make([]types.SnapshotInfo, 0, len(items))
+	for _, item := range items {
+		entry, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		name := firstString(entry, "Name", "name", "Distribution", "distribution", "Id", "id")
+		if name == "" {
+			continue
+		}
+		createdRaw := firstString(entry, "CreatedAt", "createdAt", "Created", "created", "CreatedAtUtc", "created_at")
+		snapshots = append(snapshots, types.SnapshotInfo{
+			SnapshotID: name,
+			CreatedAt:  parseTimeFlexible(createdRaw),
+		})
+	}
+	return snapshots, nil
+}
+
+func extractDistributionItems(payload interface{}) []interface{} {
+	switch typed := payload.(type) {
+	case []interface{}:
+		return typed
+	case map[string]interface{}:
+		for _, key := range []string{"items", "Items", "distributions", "Distributions", "data", "Data"} {
+			if value, ok := typed[key]; ok {
+				if list, ok := value.([]interface{}); ok {
+					return list
+				}
+			}
+		}
+	}
+	return []interface{}{}
+}
+
+func firstString(values map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if raw, ok := values[key]; ok {
+			if str, ok := raw.(string); ok {
+				return strings.TrimSpace(str)
+			}
+		}
+	}
+	return ""
+}
+
+func parseTimeFlexible(value string) time.Time {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return time.Time{}
+	}
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05 -0700 MST",
+		"2006-01-02 15:04:05",
+	}
+	for _, layout := range layouts {
+		if parsed, err := time.Parse(layout, trimmed); err == nil {
+			return parsed.UTC()
+		}
+	}
+	return time.Time{}
 }
 
 var _ ports.RepoSnapshotPort = RepoSnapshotProGetAdapter{}

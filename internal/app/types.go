@@ -19,6 +19,7 @@ type ResolveRequest struct {
 	OutputDir            string
 	SnapshotID           string
 	TargetUbuntu         string
+	SchemaFiles          []string
 	CompatGet            bool
 	CompatRosdep         bool
 	EmitAptPreferences   bool

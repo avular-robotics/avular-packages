@@ -2,8 +2,11 @@ package adapters
 
 import (
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -268,9 +271,9 @@ func fetchAptPackages(ctx context.Context, url string, user string, apiKey strin
 			WithMsg("failed to fetch apt packages").
 			WithCause(fmt.Errorf("status=%d url=%s", status, url))
 	}
-	var reader io.Reader = strings.NewReader(string(body))
-	if strings.HasSuffix(url, ".gz") || strings.EqualFold(header.Get("Content-Encoding"), "gzip") {
-		gz, err := gzip.NewReader(strings.NewReader(string(body)))
+	var reader io.Reader = bytes.NewReader(body)
+	if isGzipContent(url, body, header) {
+		gz, err := gzip.NewReader(bytes.NewReader(body))
 		if err != nil {
 			return nil, false, errbuilder.New().
 				WithCode(errbuilder.CodeInternal).
@@ -395,11 +398,11 @@ func parseAptPackages(reader io.Reader) (map[string]map[string]types.AptPackageV
 	return packages, nil
 }
 
-func buildPipIndex(ctx context.Context, base string, user string, apiKey string, packages []string, maxPackages int, workerCount int, httpCfg httpRetryConfig) (map[string][]string, error) {
+func buildPipIndex(ctx context.Context, base string, user string, apiKey string, packages []string, maxPackages int, workerCount int, httpCfg httpRetryConfig, cacheCfg cacheConfig) (map[string][]string, error) {
 	simpleBase := normalizePipSimpleIndex(base)
 	names := uniqueStrings(normalizePipNames(packages))
 	if len(names) == 0 {
-		list, err := fetchPipPackageNames(ctx, simpleBase, user, apiKey, httpCfg)
+		list, err := fetchPipPackageNames(ctx, simpleBase, user, apiKey, httpCfg, cacheCfg)
 		if err != nil {
 			return nil, err
 		}
@@ -437,7 +440,7 @@ func buildPipIndex(ctx context.Context, base string, user string, apiKey string,
 					results <- pipResult{name: name, versions: nil, err: ctx.Err()}
 					continue
 				}
-				versions, err := fetchPipPackageVersions(ctx, simpleBase, name, user, apiKey, httpCfg)
+				versions, err := fetchPipPackageVersions(ctx, simpleBase, name, user, apiKey, httpCfg, cacheCfg)
 				results <- pipResult{name: name, versions: versions, err: err}
 			}
 		}()
@@ -470,24 +473,16 @@ func buildPipIndex(ctx context.Context, base string, user string, apiKey string,
 	return index, nil
 }
 
-func fetchPipPackageNames(ctx context.Context, simpleBase string, user string, apiKey string, httpCfg httpRetryConfig) ([]string, error) {
-	resp, err := doRequest(ctx, simpleBase, user, apiKey, httpCfg)
+func fetchPipPackageNames(ctx context.Context, simpleBase string, user string, apiKey string, httpCfg httpRetryConfig, cacheCfg cacheConfig) ([]string, error) {
+	status, body, _, err := fetchURL(ctx, simpleBase, user, apiKey, httpCfg, cacheCfg)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if status < 200 || status >= 300 {
 		return nil, errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("failed to fetch pip index").
-			WithCause(fmt.Errorf("status=%d url=%s", resp.StatusCode, simpleBase))
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, errbuilder.New().
-			WithCode(errbuilder.CodeInternal).
-			WithMsg("failed to read pip index").
-			WithCause(err)
+			WithCause(fmt.Errorf("status=%d url=%s", status, simpleBase))
 	}
 	names := parsePipSimpleNames(string(body))
 	if len(names) == 0 {
@@ -498,31 +493,114 @@ func fetchPipPackageNames(ctx context.Context, simpleBase string, user string, a
 	return names, nil
 }
 
-func fetchPipPackageVersions(ctx context.Context, simpleBase string, name string, user string, apiKey string, httpCfg httpRetryConfig) ([]string, error) {
+func fetchPipPackageVersions(ctx context.Context, simpleBase string, name string, user string, apiKey string, httpCfg httpRetryConfig, cacheCfg cacheConfig) ([]string, error) {
 	url := strings.TrimRight(simpleBase, "/") + "/" + name + "/"
-	resp, err := doRequest(ctx, url, user, apiKey, httpCfg)
+	status, body, _, err := fetchURL(ctx, url, user, apiKey, httpCfg, cacheCfg)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
+	if status == http.StatusNotFound {
 		return nil, nil
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if status < 200 || status >= 300 {
 		return nil, errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("failed to fetch pip package").
-			WithCause(fmt.Errorf("status=%d url=%s", resp.StatusCode, url))
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, errbuilder.New().
-			WithCode(errbuilder.CodeInternal).
-			WithMsg("failed to read pip package index").
-			WithCause(err)
+			WithCause(fmt.Errorf("status=%d url=%s", status, url))
 	}
 	versions := parsePipVersionsFromSimple(string(body))
 	return sortPep440Versions(versions), nil
+}
+
+func fetchURL(ctx context.Context, url string, user string, apiKey string, httpCfg httpRetryConfig, cacheCfg cacheConfig) (int, []byte, http.Header, error) {
+	if cacheCfg.dir != "" && cacheCfg.ttl > 0 {
+		key := cacheKey(url, user, apiKey)
+		if payload, ok, err := readCache(cacheCfg, key); err != nil {
+			return 0, nil, nil, err
+		} else if ok {
+			return http.StatusOK, payload, http.Header{}, nil
+		}
+	}
+	resp, err := doRequest(ctx, url, user, apiKey, httpCfg)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	defer resp.Body.Close()
+	payload, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, nil, errbuilder.New().
+			WithCode(errbuilder.CodeInternal).
+			WithMsg("failed to read response body").
+			WithCause(err)
+	}
+	if cacheCfg.dir != "" && cacheCfg.ttl > 0 && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		key := cacheKey(url, user, apiKey)
+		_ = writeCache(cacheCfg, key, payload)
+	}
+	return resp.StatusCode, payload, resp.Header, nil
+}
+
+func isGzipContent(url string, data []byte, header http.Header) bool {
+	if strings.HasSuffix(url, ".gz") {
+		return true
+	}
+	if header != nil && strings.EqualFold(header.Get("Content-Encoding"), "gzip") {
+		return true
+	}
+	return len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b
+}
+
+func cacheKey(url string, user string, apiKey string) string {
+	sum := sha256.Sum256([]byte(url + "|" + user + "|" + apiKey))
+	return hex.EncodeToString(sum[:])
+}
+
+func readCache(cfg cacheConfig, key string) ([]byte, bool, error) {
+	if cfg.dir == "" || cfg.ttl <= 0 {
+		return nil, false, nil
+	}
+	path := filepath.Join(cfg.dir, key+".cache")
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, false, nil
+		}
+		return nil, false, errbuilder.New().
+			WithCode(errbuilder.CodeInternal).
+			WithMsg("failed to stat cache file").
+			WithCause(err)
+	}
+	if time.Since(info.ModTime()) > cfg.ttl {
+		return nil, false, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false, errbuilder.New().
+			WithCode(errbuilder.CodeInternal).
+			WithMsg("failed to read cache file").
+			WithCause(err)
+	}
+	return data, true, nil
+}
+
+func writeCache(cfg cacheConfig, key string, data []byte) error {
+	if cfg.dir == "" || cfg.ttl <= 0 {
+		return nil
+	}
+	if err := os.MkdirAll(cfg.dir, 0755); err != nil {
+		return errbuilder.New().
+			WithCode(errbuilder.CodeInternal).
+			WithMsg("failed to create cache directory").
+			WithCause(err)
+	}
+	path := filepath.Join(cfg.dir, key+".cache")
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return errbuilder.New().
+			WithCode(errbuilder.CodeInternal).
+			WithMsg("failed to write cache file").
+			WithCause(err)
+	}
+	return nil
 }
 
 func normalizePipSimpleIndex(base string) string {

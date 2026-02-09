@@ -1,0 +1,53 @@
+version: 2
+
+project_name: avular-packages
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/avular-packages
+    binary: avular-packages
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X avular-packages/internal/cli.version={{ .Version }}
+
+archives:
+  - format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+nfpms:
+  - package_name: avular-packages
+    vendor: Avular Robotics
+    homepage: https://github.com/avular-robotics/avular-packages
+    maintainer: Avular Robotics <info@avular.com>
+    description: Unified dependency resolver and packager for Avular Robotics projects
+    license: Proprietary
+    formats:
+      - deb
+    bindir: /usr/local/bin
+    contents:
+      - src: LICENSE
+        dst: /usr/share/doc/avular-packages/copyright
+        type: doc
+        file_info:
+          mode: 0644
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github-native
+
+release:
+  # goreleaser appends artifacts to the release created by semantic-release
+  skip: true

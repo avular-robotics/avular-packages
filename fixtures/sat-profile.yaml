@@ -1,0 +1,17 @@
+api_version: "v1"
+kind: "profile"
+metadata:
+  name: "sat-profile"
+  version: "2026.02.09"
+  owners: ["platform"]
+inputs:
+  package_xml:
+    enabled: false
+    tags: []
+packaging:
+  groups:
+    - name: "apt-individual"
+      mode: "individual"
+      scope: "runtime"
+      matches: ["apt:*"]
+      targets: ["22.04"]

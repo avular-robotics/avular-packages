@@ -19,6 +19,13 @@ type PackageXMLInput struct {
 	Prefix     string   `yaml:"prefix,omitempty"`
 	Enabled    bool     `yaml:"enabled"`
 	IncludeSrc bool     `yaml:"include_src,omitempty"`
+
+	// SchemaFiles lists paths to schema.yaml files that map abstract
+	// ROS dependency keys to concrete typed packages.  Files are loaded
+	// in order; later files override earlier ones per key.
+	// When non-empty, standard ROS tags (<depend>, <exec_depend>, etc.)
+	// are parsed and resolved through the schema.
+	SchemaFiles []string `yaml:"schema_files,omitempty"`
 }
 
 type ManualInputs struct {

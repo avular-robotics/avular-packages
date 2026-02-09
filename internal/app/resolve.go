@@ -62,8 +62,20 @@ func (s Service) Resolve(ctx context.Context, req ResolveRequest) (ResolveResult
 		return ResolveResult{}, err
 	}
 
+	// Merge CLI schema files with spec-level ones (CLI appended last = highest precedence)
+	resolveInputs := composed.Inputs
+	if len(req.SchemaFiles) > 0 {
+		resolveInputs.PackageXML.SchemaFiles = append(
+			resolveInputs.PackageXML.SchemaFiles,
+			req.SchemaFiles...,
+		)
+	}
+
 	builder := core.NewDependencyBuilder(s.Workspace, s.PackageXML)
-	deps, err := builder.BuildFromSpecs(ctx, product, profiles, composed.Inputs, req.Workspace)
+	if s.SchemaResolver != nil {
+		builder = builder.WithSchemaResolver(s.SchemaResolver)
+	}
+	deps, err := builder.BuildFromSpecs(ctx, product, profiles, resolveInputs, req.Workspace)
 	if err != nil {
 		return ResolveResult{}, err
 	}

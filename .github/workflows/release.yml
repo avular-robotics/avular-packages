@@ -1,0 +1,85 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Step 1: semantic-release determines version, creates tag + GitHub Release ──
+  semantic-release:
+    runs-on: ubuntu-latest
+    outputs:
+      released: ${{ steps.semantic.outputs.new_release_published }}
+      version: ${{ steps.semantic.outputs.new_release_version }}
+      tag: ${{ steps.semantic.outputs.new_release_git_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cycjimmy/semantic-release-action@v4
+        id: semantic
+        with:
+          extra_plugins: ""
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Step 2: build binaries + debs, upload to GitHub Release + deb registry ──
+  publish:
+    needs: semantic-release
+    if: needs.semantic-release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch tags
+        run: git fetch --tags --force
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build with GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          args: release --clean --skip=publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ needs.semantic-release.outputs.tag }}
+
+      - name: Upload assets to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.semantic-release.outputs.tag }}
+        run: |
+          echo "==> Uploading release assets for ${TAG}..."
+          gh release upload "${TAG}" \
+            dist/*.tar.gz \
+            dist/*.deb \
+            dist/checksums.txt \
+            --clobber
+
+      - name: Upload debs to Avular registry
+        if: vars.DEB_REGISTRY_URL != '' && secrets.PROGET_DEB_API_KEY != ''
+        env:
+          PROGET_DEB_API_KEY: ${{ secrets.PROGET_DEB_API_KEY }}
+          REGISTRY_URL: ${{ vars.DEB_REGISTRY_URL || 'https://packages.avular.dev' }}
+          FEED: ${{ vars.DEB_FEED || 'avular-tools' }}
+          COMPONENT: ${{ vars.DEB_COMPONENT || 'main' }}
+        run: |
+          for deb in dist/*.deb; do
+            [ -f "$deb" ] || continue
+            FILENAME="$(basename "$deb")"
+            echo "==> Uploading ${FILENAME} to ${REGISTRY_URL}..."
+            curl -sSf \
+              -X POST \
+              -H "X-ApiKey: ${PROGET_DEB_API_KEY}" \
+              -F "file=@${deb}" \
+              "${REGISTRY_URL}/debian-packages/upload/${FEED}/${COMPONENT}"
+            echo "    Done: ${FILENAME}"
+          done

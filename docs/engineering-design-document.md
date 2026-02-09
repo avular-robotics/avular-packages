@@ -157,7 +157,10 @@ Use aptly only as a **weekly upstream mirror** (not a primary publish backend).
 ## 15) Open Questions
 - None. All major decisions have been locked by stakeholder input.
 
-## 16) Implementation Status
+## 16) Long-Term Alternatives
+- See `docs/alternatives-nix-conda.md` for a Nix/Conda-style design note and decision criteria.
+
+## 17) Implementation Status
 - Resolver, spec compiler, composition, and file adapters are implemented.
 - Build supports Python deb packaging (individual/meta/fat) and optional internal deb builds.
 - Publish supports file backend (dev), ProGet publishing (primary), and aptly-backed snapshot publishing (mirror/ops).

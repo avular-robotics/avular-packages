@@ -12,6 +12,7 @@ type Service struct {
 	ProfileSource   ports.ProfileSourcePort
 	Workspace       ports.WorkspacePort
 	PackageXML      ports.PackageXMLPort
+	SchemaResolver  ports.SchemaResolverPort
 	OutputReader    ports.OutputReaderPort
 	SBOMWriter      ports.SBOMPort
 	RepoIndexBuild  ports.RepoIndexBuilderPort
@@ -27,6 +28,7 @@ func NewService() Service {
 		ProfileSource:   adapters.NewProfileSourceAdapter(spec),
 		Workspace:       adapters.NewWorkspaceAdapter(),
 		PackageXML:      adapters.NewPackageXMLAdapter(),
+		SchemaResolver:  adapters.NewSchemaResolverAdapter(),
 		OutputReader:    adapters.NewOutputReaderAdapter(),
 		SBOMWriter:      adapters.NewSBOMWriterAdapter(),
 		RepoIndexBuild:  adapters.NewRepoIndexBuilderAdapter(),

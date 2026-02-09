@@ -1,4 +1,5 @@
 .cursor/
 out/
+dist/
 .venv/
 .venv-build/

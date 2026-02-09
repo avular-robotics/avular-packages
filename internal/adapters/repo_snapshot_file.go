@@ -9,6 +9,7 @@ import (
 	"github.com/ZanzyTHEbar/errbuilder-go"
 
 	"avular-packages/internal/ports"
+	"avular-packages/internal/types"
 )
 
 type RepoSnapshotFileAdapter struct {
@@ -96,6 +97,93 @@ func (a RepoSnapshotFileAdapter) Promote(ctx context.Context, snapshotID string,
 		return errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("failed to write channel pointer").
+			WithCause(err)
+	}
+	return nil
+}
+
+func (a RepoSnapshotFileAdapter) ListSnapshots(ctx context.Context) ([]types.SnapshotInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(a.Dir) == "" {
+		return nil, errbuilder.New().
+			WithCode(errbuilder.CodeInvalidArgument).
+			WithMsg("repo snapshot directory is empty")
+	}
+	snapshotsDir := filepath.Join(a.Dir, "snapshots")
+	entries, err := os.ReadDir(snapshotsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []types.SnapshotInfo{}, nil
+		}
+		return nil, errbuilder.New().
+			WithCode(errbuilder.CodeInternal).
+			WithMsg("failed to read snapshots directory").
+			WithCause(err)
+	}
+	var snapshots []types.SnapshotInfo
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".snapshot") {
+			continue
+		}
+		path := filepath.Join(snapshotsDir, name)
+		info, err := entry.Info()
+		if err != nil {
+			return nil, errbuilder.New().
+				WithCode(errbuilder.CodeInternal).
+				WithMsg("failed to read snapshot info").
+				WithCause(err)
+		}
+		snapshotID := strings.TrimSuffix(name, ".snapshot")
+		content, err := os.ReadFile(path)
+		if err == nil {
+			line := strings.TrimSpace(string(content))
+			if line != "" {
+				snapshotID = line
+			}
+		}
+		snapshots = append(snapshots, types.SnapshotInfo{
+			SnapshotID: snapshotID,
+			CreatedAt:  info.ModTime().UTC(),
+		})
+	}
+	return snapshots, nil
+}
+
+func (a RepoSnapshotFileAdapter) DeleteSnapshot(ctx context.Context, snapshotID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(a.Dir) == "" {
+		return errbuilder.New().
+			WithCode(errbuilder.CodeInvalidArgument).
+			WithMsg("repo snapshot directory is empty")
+	}
+	if strings.TrimSpace(snapshotID) == "" {
+		return errbuilder.New().
+			WithCode(errbuilder.CodeInvalidArgument).
+			WithMsg("snapshot id is empty")
+	}
+	if strings.Contains(snapshotID, string(os.PathSeparator)) {
+		return errbuilder.New().
+			WithCode(errbuilder.CodeInvalidArgument).
+			WithMsg("snapshot id contains path separator")
+	}
+	path := filepath.Join(a.Dir, "snapshots", snapshotID+".snapshot")
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return errbuilder.New().
+				WithCode(errbuilder.CodeNotFound).
+				WithMsg("snapshot not found")
+		}
+		return errbuilder.New().
+			WithCode(errbuilder.CodeInternal).
+			WithMsg("failed to delete snapshot").
 			WithCause(err)
 	}
 	return nil

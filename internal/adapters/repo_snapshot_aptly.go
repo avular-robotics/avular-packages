@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/ZanzyTHEbar/errbuilder-go"
 
 	"avular-packages/internal/ports"
+	"avular-packages/internal/types"
 )
 
 type RepoSnapshotAptlyAdapter struct {
@@ -124,6 +126,46 @@ func (a RepoSnapshotAptlyAdapter) Promote(ctx context.Context, snapshotID string
 		args = append(args, "-gpg-key", a.GpgKey)
 	}
 	return a.runAptly(ctx, args...)
+}
+
+func (a RepoSnapshotAptlyAdapter) ListSnapshots(ctx context.Context) ([]types.SnapshotInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	output, err := a.runAptlyOutput(ctx, "snapshot", "list", "-json")
+	if err != nil {
+		return nil, err
+	}
+	var raw []struct {
+		Name      string `json:"Name"`
+		CreatedAt string `json:"CreatedAt"`
+	}
+	if err := json.Unmarshal([]byte(output), &raw); err != nil {
+		return nil, errbuilder.New().
+			WithCode(errbuilder.CodeInternal).
+			WithMsg("failed to parse aptly snapshot list").
+			WithCause(err)
+	}
+	snapshots := make([]types.SnapshotInfo, 0, len(raw))
+	for _, entry := range raw {
+		snapshots = append(snapshots, types.SnapshotInfo{
+			SnapshotID: strings.TrimSpace(entry.Name),
+			CreatedAt:  parseTimeFlexible(entry.CreatedAt),
+		})
+	}
+	return snapshots, nil
+}
+
+func (a RepoSnapshotAptlyAdapter) DeleteSnapshot(ctx context.Context, snapshotID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(snapshotID) == "" {
+		return errbuilder.New().
+			WithCode(errbuilder.CodeInvalidArgument).
+			WithMsg("snapshot id is empty")
+	}
+	return a.runAptly(ctx, "snapshot", "drop", snapshotID)
 }
 
 func (a RepoSnapshotAptlyAdapter) ensureRepo(ctx context.Context) error {

@@ -194,11 +194,11 @@ func parseAptDepSpec(value string) aptDepSpec {
 	}
 	name := raw
 	constraintPart := ""
-	if idx := strings.Index(raw, "("); idx >= 0 {
-		name = strings.TrimSpace(raw[:idx])
-		constraintPart = strings.TrimSpace(raw[idx+1:])
-		if strings.HasSuffix(constraintPart, ")") {
-			constraintPart = strings.TrimSuffix(constraintPart, ")")
+	if before, after, ok := strings.Cut(raw, "("); ok {
+		name = strings.TrimSpace(before)
+		constraintPart = strings.TrimSpace(after)
+		if before, ok :=strings.CutSuffix(constraintPart, ")"); ok  {
+			constraintPart = before
 		}
 	}
 	name = normalizeAptDepName(name)

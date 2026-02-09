@@ -18,6 +18,7 @@ type resolveOptions struct {
 	OutputDir            string
 	SnapshotID           string
 	TargetUbuntu         string
+	SchemaFiles          []string
 	CompatGetDeps        bool
 	CompatRosdep         bool
 	AptPreferences       bool
@@ -55,6 +56,7 @@ func newResolveCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opts.SnapshotAptComponent, "snapshot-apt-component", "main", "Component for snapshot apt source")
 	cmd.Flags().StringSliceVar(&opts.SnapshotAptArchs, "snapshot-apt-arch", nil, "Optional arch list for snapshot apt source")
 	cmd.Flags().BoolVar(&opts.AptSatSolver, "apt-sat-solver", false, "Resolve apt versions with SAT-based dependency closure")
+	cmd.Flags().StringSliceVar(&opts.SchemaFiles, "schema", nil, "Schema mapping file(s) for ROS tag resolution (layered, last wins)")
 
 	_ = viper.BindPFlag("product", cmd.Flags().Lookup("product"))
 	_ = viper.BindPFlag("profiles", cmd.Flags().Lookup("profile"))
@@ -72,6 +74,7 @@ func newResolveCommand() *cobra.Command {
 	_ = viper.BindPFlag("snapshot_apt_component", cmd.Flags().Lookup("snapshot-apt-component"))
 	_ = viper.BindPFlag("snapshot_apt_arch", cmd.Flags().Lookup("snapshot-apt-arch"))
 	_ = viper.BindPFlag("apt_sat_solver", cmd.Flags().Lookup("apt-sat-solver"))
+	_ = viper.BindPFlag("schema_files", cmd.Flags().Lookup("schema"))
 
 	return cmd
 }
@@ -86,6 +89,7 @@ func runResolve(ctx context.Context, cmd *cobra.Command, opts resolveOptions) er
 		OutputDir:            resolveString(cmd, opts.OutputDir, "output", "output"),
 		SnapshotID:           resolveString(cmd, opts.SnapshotID, "snapshot_id", "snapshot-id"),
 		TargetUbuntu:         resolveString(cmd, opts.TargetUbuntu, "target_ubuntu", "target-ubuntu"),
+		SchemaFiles:          resolveStrings(cmd, opts.SchemaFiles, "schema_files", "schema"),
 		CompatGet:            resolveBool(cmd, opts.CompatGetDeps, "compat_get_dependencies", "compat-get-dependencies"),
 		CompatRosdep:         resolveBool(cmd, opts.CompatRosdep, "compat_rosdep", "compat-rosdep"),
 		EmitAptPreferences:   resolveBool(cmd, opts.AptPreferences, "apt_preferences", "apt-preferences"),

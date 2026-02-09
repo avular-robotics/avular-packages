@@ -12,6 +12,9 @@ import (
 	"github.com/spf13/viper"
 )
 
+// version is set at build time via ldflags.
+var version = "dev"
+
 const envPrefix = "AVULAR_PACKAGES"
 
 type RootConfig struct {
@@ -29,8 +32,9 @@ func Execute() {
 func newRootCommand() *cobra.Command {
 	cfg := RootConfig{}
 	cmd := &cobra.Command{
-		Use:   "avular-packages",
-		Short: "Unified dependency resolver and packager",
+		Use:     "avular-packages",
+		Short:   "Unified dependency resolver and packager",
+		Version: version,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			if err := initConfig(cfg.ConfigFile); err != nil {
 				return err
