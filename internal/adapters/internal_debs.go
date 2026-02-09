@@ -1,7 +1,6 @@
 package adapters
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -11,6 +10,7 @@ import (
 	"github.com/ZanzyTHEbar/errbuilder-go"
 
 	"avular-packages/internal/ports"
+	"avular-packages/internal/shared"
 )
 
 type InternalDebsAdapter struct{}
@@ -55,7 +55,7 @@ func (a InternalDebsAdapter) BuildInternalDebs(srcDirs []string, destDir string)
 			return errbuilder.New().
 				WithCode(errbuilder.CodeInternal).
 				WithMsg("dpkg-buildpackage failed").
-				WithCause(fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), err))
+				WithCause(shared.CommandError(output, err))
 		}
 		parent := filepath.Dir(dir)
 		if err := a.CopyDebs(parent, destDir); err != nil {

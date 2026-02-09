@@ -218,7 +218,7 @@ func (a OutputFileAdapter) ensurePath(filename string) (string, error) {
 			WithCode(errbuilder.CodeInvalidArgument).
 			WithMsg("output directory is empty")
 	}
-	if err := os.MkdirAll(a.Dir, 0755); err != nil {
+	if err := os.MkdirAll(a.Dir, 0o750); err != nil {
 		return "", errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("failed to create output directory").

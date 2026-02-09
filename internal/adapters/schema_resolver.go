@@ -9,6 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"avular-packages/internal/ports"
+	"avular-packages/internal/shared"
 	"avular-packages/internal/types"
 )
 
@@ -225,7 +226,7 @@ func parseSchemaVersion(pkg string, version string, depType types.DependencyType
 
 		name := pkg
 		if depType == types.DependencyTypePip {
-			name = normalizePipName(pkg)
+			name = shared.NormalizePipName(pkg)
 		}
 
 		constraints = append(constraints, types.Constraint{

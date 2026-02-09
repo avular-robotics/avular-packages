@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"avular-packages/internal/shared"
 	"avular-packages/internal/types"
 )
 
@@ -195,7 +196,7 @@ func TestNormalizePipName(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			assert.Equal(t, tt.expected, normalizePipName(tt.input))
+			assert.Equal(t, tt.expected, shared.NormalizePipName(tt.input))
 		})
 	}
 }

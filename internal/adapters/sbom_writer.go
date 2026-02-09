@@ -17,10 +17,18 @@ import (
 	"avular-packages/internal/types"
 )
 
-type SBOMWriterAdapter struct{}
+// DefaultSBOMNamespace is the base URL used for SPDX document namespaces.
+const DefaultSBOMNamespace = "https://avular.dev/spdx/snapshots"
 
+// SBOMWriterAdapter writes SPDX-2.3 SBOM JSON files to the snapshots
+// directory. NamespaceBase controls the SPDX documentNamespace URL prefix.
+type SBOMWriterAdapter struct {
+	NamespaceBase string
+}
+
+// NewSBOMWriterAdapter creates an adapter with the default namespace URL.
 func NewSBOMWriterAdapter() SBOMWriterAdapter {
-	return SBOMWriterAdapter{}
+	return SBOMWriterAdapter{NamespaceBase: DefaultSBOMNamespace}
 }
 
 func (a SBOMWriterAdapter) WriteSBOM(repoDir string, snapshotID string, createdAt string, locks []types.AptLockEntry) error {
@@ -35,7 +43,7 @@ func (a SBOMWriterAdapter) WriteSBOM(repoDir string, snapshotID string, createdA
 			WithMsg("snapshot id is empty")
 	}
 	snapshotsDir := filepath.Join(repoDir, "snapshots")
-	if err := os.MkdirAll(snapshotsDir, 0755); err != nil {
+	if err := os.MkdirAll(snapshotsDir, 0o750); err != nil {
 		return errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("failed to create snapshots directory").
@@ -82,7 +90,7 @@ func (a SBOMWriterAdapter) WriteSBOM(repoDir string, snapshotID string, createdA
 		DataLicense:       "CC0-1.0",
 		SPDXID:            "SPDXRef-DOCUMENT",
 		Name:              fmt.Sprintf("avular-packages snapshot %s", snapshotID),
-		DocumentNamespace: fmt.Sprintf("https://avular.dev/spdx/snapshots/%s", snapshotID),
+		DocumentNamespace: fmt.Sprintf("%s/%s", strings.TrimRight(a.namespaceBase(), "/"), snapshotID),
 		CreationInfo: spdxCreationInfo{
 			Created:  created,
 			Creators: []string{"Tool: avular-packages"},
@@ -121,6 +129,13 @@ func (a SBOMWriterAdapter) WriteSBOM(repoDir string, snapshotID string, createdA
 			WithCause(err)
 	}
 	return nil
+}
+
+func (a SBOMWriterAdapter) namespaceBase() string {
+	if strings.TrimSpace(a.NamespaceBase) == "" {
+		return DefaultSBOMNamespace
+	}
+	return a.NamespaceBase
 }
 
 func spdxPackageID(name string, version string) string {

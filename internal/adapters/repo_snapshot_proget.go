@@ -16,6 +16,7 @@ import (
 	"github.com/ZanzyTHEbar/errbuilder-go"
 
 	"avular-packages/internal/ports"
+	"avular-packages/internal/shared"
 	"avular-packages/internal/types"
 )
 
@@ -39,26 +40,38 @@ const defaultProgetRetryDelay = 200 * time.Millisecond
 const defaultProgetTimeout = 60 * time.Second
 const maxProgetRetryDelay = 2 * time.Second
 
-func NewRepoSnapshotProGetAdapter(endpoint string, feed string, component string, debsDir string, username string, apiKey string, snapshotPrefix string, workers int, timeoutSec int, retries int, retryDelayMs int) RepoSnapshotProGetAdapter {
+// ProGetConfig bundles configuration for creating a ProGet snapshot adapter.
+type ProGetConfig struct {
+	Endpoint       string
+	Feed           string
+	Component      string
+	DebsDir        string
+	Username       string
+	APIKey         string
+	SnapshotPrefix string
+	Workers        int
+	TimeoutSec     int
+	Retries        int
+	RetryDelayMs   int
+}
+
+func NewRepoSnapshotProGetAdapter(cfg ProGetConfig) RepoSnapshotProGetAdapter {
+	component := cfg.Component
 	if component == "" {
 		component = "main"
 	}
-	workers = normalizeProgetWorkers(workers)
-	timeout := normalizeProgetTimeout(timeoutSec)
-	retryCount := normalizeProgetRetries(retries)
-	retryDelay := normalizeProgetRetryDelay(retryDelayMs)
 	return RepoSnapshotProGetAdapter{
-		Endpoint:       endpoint,
-		Feed:           feed,
+		Endpoint:       cfg.Endpoint,
+		Feed:           cfg.Feed,
 		Component:      component,
-		DebsDir:        debsDir,
-		Username:       username,
-		APIKey:         apiKey,
-		SnapshotPrefix: snapshotPrefix,
-		Workers:        workers,
-		Timeout:        timeout,
-		Retries:        retryCount,
-		RetryDelay:     retryDelay,
+		DebsDir:        cfg.DebsDir,
+		Username:       cfg.Username,
+		APIKey:         cfg.APIKey,
+		SnapshotPrefix: cfg.SnapshotPrefix,
+		Workers:        normalizeProgetWorkers(cfg.Workers),
+		Timeout:        normalizeProgetTimeout(cfg.TimeoutSec),
+		Retries:        normalizeProgetRetries(cfg.Retries),
+		RetryDelay:     normalizeProgetRetryDelay(cfg.RetryDelayMs),
 	}
 }
 
@@ -230,7 +243,7 @@ func (a RepoSnapshotProGetAdapter) uploadDebOnce(ctx context.Context, path strin
 	return retry, errbuilder.New().
 		WithCode(errbuilder.CodeInternal).
 		WithMsg("proget upload failed").
-		WithCause(fmt.Errorf("status=%d url=%s response=%s", resp.StatusCode, url, message))
+		WithCause(shared.HTTPStatusErrorWithBody(resp.StatusCode, url, message))
 }
 
 func (a RepoSnapshotProGetAdapter) progetRetryDelay(attempt int) time.Duration {
@@ -346,7 +359,7 @@ func (a RepoSnapshotProGetAdapter) ListSnapshots(ctx context.Context) ([]types.S
 		return nil, errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("proget list snapshots failed").
-			WithCause(fmt.Errorf("status=%d url=%s response=%s", resp.StatusCode, listURL, strings.TrimSpace(string(body))))
+			WithCause(shared.HTTPStatusErrorWithBody(resp.StatusCode, listURL, strings.TrimSpace(string(body))))
 	}
 	snapshots, err := decodeProgetDistributions(body)
 	if err != nil {
@@ -399,7 +412,7 @@ func (a RepoSnapshotProGetAdapter) DeleteSnapshot(ctx context.Context, snapshotI
 		return errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("proget delete snapshot failed").
-			WithCause(fmt.Errorf("status=%d url=%s response=%s", resp.StatusCode, deleteURL, strings.TrimSpace(string(body))))
+			WithCause(shared.HTTPStatusErrorWithBody(resp.StatusCode, deleteURL, strings.TrimSpace(string(body))))
 	}
 	return nil
 }

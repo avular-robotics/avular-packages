@@ -35,7 +35,7 @@ func (a CompatibilityOutputAdapter) WriteGetDependencies(resolved []types.Resolv
 	sort.Strings(aptLines)
 	sort.Strings(pipLines)
 
-	if err := os.MkdirAll(a.Dir, 0755); err != nil {
+	if err := os.MkdirAll(a.Dir, 0o750); err != nil {
 		return errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("failed to create output directory").
@@ -83,7 +83,7 @@ func (a CompatibilityOutputAdapter) WriteRosdepMapping(resolved []types.Resolved
 		builder.WriteString(aptDeps[name])
 		builder.WriteString("\n")
 	}
-	if err := os.MkdirAll(a.Dir, 0755); err != nil {
+	if err := os.MkdirAll(a.Dir, 0o750); err != nil {
 		return errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("failed to create output directory").

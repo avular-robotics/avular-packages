@@ -24,6 +24,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"avular-packages/internal/ports"
+	"avular-packages/internal/shared"
 	"avular-packages/internal/types"
 )
 
@@ -53,6 +54,15 @@ type httpRetryConfig struct {
 type cacheConfig struct {
 	dir string
 	ttl time.Duration
+}
+
+// repoClient bundles the credentials and transport configuration shared
+// across all HTTP-based repository fetch operations.
+type repoClient struct {
+	user     string
+	apiKey   string
+	httpCfg  httpRetryConfig
+	cacheCfg cacheConfig
 }
 
 func normalizeHTTPConfig(timeoutSec int, retries int, delayMs int) httpRetryConfig {
@@ -110,21 +120,19 @@ func (a RepoIndexBuilderAdapter) Build(ctx context.Context, request ports.RepoIn
 	)
 	httpCfg := normalizeHTTPConfig(request.HTTPTimeoutSec, request.HTTPRetries, request.HTTPRetryDelayMs)
 	cacheCfg := normalizeCacheConfig(request.CacheDir, request.CacheTTLMinutes)
-	aptVersions, aptPackages, err := buildAptIndex(ctx, aptSources, request.AptUser, request.AptAPIKey, request.AptWorkers, httpCfg, cacheCfg)
+	aptClient := &repoClient{user: request.AptUser, apiKey: request.AptAPIKey, httpCfg: httpCfg, cacheCfg: cacheCfg}
+	aptVersions, aptPackages, err := buildAptIndex(ctx, aptSources, request.AptWorkers, aptClient)
 	if err != nil {
 		return types.RepoIndexFile{}, err
 	}
-	pipIndexMap, err := buildPipIndex(
-		ctx,
-		pipIndex,
-		request.PipUser,
-		request.PipAPIKey,
-		request.PipPackages,
-		request.PipMax,
-		request.PipWorkers,
-		httpCfg,
-		cacheCfg,
-	)
+	pipClient := &repoClient{user: request.PipUser, apiKey: request.PipAPIKey, httpCfg: httpCfg, cacheCfg: cacheCfg}
+	pipIndexMap, err := buildPipIndex(ctx, pipIndexRequest{
+		base:        pipIndex,
+		client:      pipClient,
+		packages:    request.PipPackages,
+		maxPackages: request.PipMax,
+		workerCount: request.PipWorkers,
+	})
 	if err != nil {
 		return types.RepoIndexFile{}, err
 	}
@@ -148,7 +156,7 @@ func (a RepoIndexWriterAdapter) Write(path string, index types.RepoIndexFile) er
 			WithMsg("failed to marshal repo index").
 			WithCause(err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("failed to create repo index directory").
@@ -163,7 +171,7 @@ func (a RepoIndexWriterAdapter) Write(path string, index types.RepoIndexFile) er
 	return nil
 }
 
-func buildAptIndex(ctx context.Context, sources []aptSource, user string, apiKey string, workerCount int, httpCfg httpRetryConfig, cacheCfg cacheConfig) (map[string][]string, map[string][]types.AptPackageVersion, error) {
+func buildAptIndex(ctx context.Context, sources []aptSource, workerCount int, client *repoClient) (map[string][]string, map[string][]types.AptPackageVersion, error) {
 	if len(sources) == 0 {
 		return nil, nil, errbuilder.New().
 			WithCode(errbuilder.CodeInvalidArgument).
@@ -193,7 +201,7 @@ func buildAptIndex(ctx context.Context, sources []aptSource, user string, apiKey
 			if ctx.Err() != nil {
 				return
 			}
-			index, err := buildAptIndexSingle(ctx, source, user, apiKey, httpCfg, cacheCfg)
+			index, err := buildAptIndexSingle(ctx, source, client)
 			if err != nil {
 				errMu.Lock()
 				if firstErr == nil {
@@ -226,7 +234,7 @@ func buildAptIndex(ctx context.Context, sources []aptSource, user string, apiKey
 	return versions, packages, nil
 }
 
-func buildAptIndexSingle(ctx context.Context, source aptSource, user string, apiKey string, httpCfg httpRetryConfig, cacheCfg cacheConfig) (map[string]map[string]types.AptPackageVersion, error) {
+func buildAptIndexSingle(ctx context.Context, source aptSource, client *repoClient) (map[string]map[string]types.AptPackageVersion, error) {
 	base := strings.TrimRight(strings.TrimSpace(source.Endpoint), "/")
 	component := strings.TrimSpace(source.Component)
 	if component == "" {
@@ -243,13 +251,13 @@ func buildAptIndexSingle(ctx context.Context, source aptSource, user string, api
 			WithMsg("apt distribution is required")
 	}
 	gzURL := fmt.Sprintf("%s/dists/%s/%s/binary-%s/Packages.gz", base, distribution, component, arch)
-	index, notFound, err := fetchAptPackages(ctx, gzURL, user, apiKey, httpCfg, cacheCfg)
+	index, notFound, err := fetchAptPackages(ctx, gzURL, client)
 	if err != nil {
 		return nil, err
 	}
 	if notFound {
 		plainURL := fmt.Sprintf("%s/dists/%s/%s/binary-%s/Packages", base, distribution, component, arch)
-		index, _, err = fetchAptPackages(ctx, plainURL, user, apiKey, httpCfg, cacheCfg)
+		index, _, err = fetchAptPackages(ctx, plainURL, client)
 		if err != nil {
 			return nil, err
 		}
@@ -257,8 +265,8 @@ func buildAptIndexSingle(ctx context.Context, source aptSource, user string, api
 	return index, nil
 }
 
-func fetchAptPackages(ctx context.Context, url string, user string, apiKey string, httpCfg httpRetryConfig, cacheCfg cacheConfig) (map[string]map[string]types.AptPackageVersion, bool, error) {
-	status, body, header, err := fetchURL(ctx, url, user, apiKey, httpCfg, cacheCfg)
+func fetchAptPackages(ctx context.Context, url string, client *repoClient) (map[string]map[string]types.AptPackageVersion, bool, error) {
+	status, body, header, err := client.fetchURL(ctx, url)
 	if err != nil {
 		return nil, false, err
 	}
@@ -269,7 +277,7 @@ func fetchAptPackages(ctx context.Context, url string, user string, apiKey strin
 		return nil, false, errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("failed to fetch apt packages").
-			WithCause(fmt.Errorf("status=%d url=%s", status, url))
+			WithCause(shared.HTTPStatusError(status, url))
 	}
 	var reader io.Reader = bytes.NewReader(body)
 	if isGzipContent(url, body, header) {
@@ -423,18 +431,28 @@ func parseAptPackages(reader io.Reader) (map[string]map[string]types.AptPackageV
 	return packages, nil
 }
 
-func buildPipIndex(ctx context.Context, base string, user string, apiKey string, packages []string, maxPackages int, workerCount int, httpCfg httpRetryConfig, cacheCfg cacheConfig) (map[string][]string, error) {
-	simpleBase := normalizePipSimpleIndex(base)
-	names := uniqueStrings(normalizePipNames(packages))
+// pipIndexRequest bundles the parameters needed to build a pip package
+// version index from a remote Simple API endpoint.
+type pipIndexRequest struct {
+	base        string
+	client      *repoClient
+	packages    []string
+	maxPackages int
+	workerCount int
+}
+
+func buildPipIndex(ctx context.Context, req pipIndexRequest) (map[string][]string, error) {
+	simpleBase := normalizePipSimpleIndex(req.base)
+	names := uniqueStrings(normalizePipNames(req.packages))
 	if len(names) == 0 {
-		list, err := fetchPipPackageNames(ctx, simpleBase, user, apiKey, httpCfg, cacheCfg)
+		list, err := fetchPipPackageNames(ctx, simpleBase, req.client)
 		if err != nil {
 			return nil, err
 		}
 		names = list
 	}
-	if maxPackages > 0 && len(names) > maxPackages {
-		names = names[:maxPackages]
+	if req.maxPackages > 0 && len(names) > req.maxPackages {
+		names = names[:req.maxPackages]
 	}
 	index := map[string][]string{}
 	if len(names) == 0 {
@@ -442,6 +460,7 @@ func buildPipIndex(ctx context.Context, base string, user string, apiKey string,
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	workerCount := req.workerCount
 	if workerCount <= 0 {
 		workerCount = 8
 	}
@@ -465,7 +484,7 @@ func buildPipIndex(ctx context.Context, base string, user string, apiKey string,
 					results <- pipResult{name: name, versions: nil, err: ctx.Err()}
 					continue
 				}
-				versions, err := fetchPipPackageVersions(ctx, simpleBase, name, user, apiKey, httpCfg, cacheCfg)
+				versions, err := fetchPipPackageVersions(ctx, simpleBase, name, req.client)
 				results <- pipResult{name: name, versions: versions, err: err}
 			}
 		}()
@@ -498,8 +517,8 @@ func buildPipIndex(ctx context.Context, base string, user string, apiKey string,
 	return index, nil
 }
 
-func fetchPipPackageNames(ctx context.Context, simpleBase string, user string, apiKey string, httpCfg httpRetryConfig, cacheCfg cacheConfig) ([]string, error) {
-	status, body, _, err := fetchURL(ctx, simpleBase, user, apiKey, httpCfg, cacheCfg)
+func fetchPipPackageNames(ctx context.Context, simpleBase string, client *repoClient) ([]string, error) {
+	status, body, _, err := client.fetchURL(ctx, simpleBase)
 	if err != nil {
 		return nil, err
 	}
@@ -507,7 +526,7 @@ func fetchPipPackageNames(ctx context.Context, simpleBase string, user string, a
 		return nil, errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("failed to fetch pip index").
-			WithCause(fmt.Errorf("status=%d url=%s", status, simpleBase))
+			WithCause(shared.HTTPStatusError(status, simpleBase))
 	}
 	names := parsePipSimpleNames(string(body))
 	if len(names) == 0 {
@@ -518,9 +537,9 @@ func fetchPipPackageNames(ctx context.Context, simpleBase string, user string, a
 	return names, nil
 }
 
-func fetchPipPackageVersions(ctx context.Context, simpleBase string, name string, user string, apiKey string, httpCfg httpRetryConfig, cacheCfg cacheConfig) ([]string, error) {
+func fetchPipPackageVersions(ctx context.Context, simpleBase string, name string, client *repoClient) ([]string, error) {
 	url := strings.TrimRight(simpleBase, "/") + "/" + name + "/"
-	status, body, _, err := fetchURL(ctx, url, user, apiKey, httpCfg, cacheCfg)
+	status, body, _, err := client.fetchURL(ctx, url)
 	if err != nil {
 		return nil, err
 	}
@@ -531,22 +550,22 @@ func fetchPipPackageVersions(ctx context.Context, simpleBase string, name string
 		return nil, errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("failed to fetch pip package").
-			WithCause(fmt.Errorf("status=%d url=%s", status, url))
+			WithCause(shared.HTTPStatusError(status, url))
 	}
 	versions := parsePipVersionsFromSimple(string(body))
 	return sortPep440Versions(versions), nil
 }
 
-func fetchURL(ctx context.Context, url string, user string, apiKey string, httpCfg httpRetryConfig, cacheCfg cacheConfig) (int, []byte, http.Header, error) {
-	if cacheCfg.dir != "" && cacheCfg.ttl > 0 {
-		key := cacheKey(url, user, apiKey)
-		if payload, ok, err := readCache(cacheCfg, key); err != nil {
+func (c *repoClient) fetchURL(ctx context.Context, url string) (int, []byte, http.Header, error) {
+	if c.cacheCfg.dir != "" && c.cacheCfg.ttl > 0 {
+		key := c.cacheKey(url)
+		if payload, ok, err := readCache(c.cacheCfg, key); err != nil {
 			return 0, nil, nil, err
 		} else if ok {
 			return http.StatusOK, payload, http.Header{}, nil
 		}
 	}
-	resp, err := doRequest(ctx, url, user, apiKey, httpCfg)
+	resp, err := c.doRequest(ctx, url)
 	if err != nil {
 		return 0, nil, nil, err
 	}
@@ -558,9 +577,9 @@ func fetchURL(ctx context.Context, url string, user string, apiKey string, httpC
 			WithMsg("failed to read response body").
 			WithCause(err)
 	}
-	if cacheCfg.dir != "" && cacheCfg.ttl > 0 && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		key := cacheKey(url, user, apiKey)
-		_ = writeCache(cacheCfg, key, payload)
+	if c.cacheCfg.dir != "" && c.cacheCfg.ttl > 0 && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		key := c.cacheKey(url)
+		_ = writeCache(c.cacheCfg, key, payload)
 	}
 	return resp.StatusCode, payload, resp.Header, nil
 }
@@ -575,8 +594,8 @@ func isGzipContent(url string, data []byte, header http.Header) bool {
 	return len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b
 }
 
-func cacheKey(url string, user string, apiKey string) string {
-	sum := sha256.Sum256([]byte(url + "|" + user + "|" + apiKey))
+func (c *repoClient) cacheKey(url string) string {
+	sum := sha256.Sum256([]byte(url + "|" + c.user + "|" + c.apiKey))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -612,7 +631,7 @@ func writeCache(cfg cacheConfig, key string, data []byte) error {
 	if cfg.dir == "" || cfg.ttl <= 0 {
 		return nil
 	}
-	if err := os.MkdirAll(cfg.dir, 0755); err != nil {
+	if err := os.MkdirAll(cfg.dir, 0o750); err != nil {
 		return errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("failed to create cache directory").
@@ -645,7 +664,7 @@ func parsePipSimpleNames(content string) []string {
 		if name == "" {
 			continue
 		}
-		names = append(names, normalizePipName(name))
+		names = append(names, shared.NormalizePipName(name))
 	}
 	sort.Strings(names)
 	return uniqueStrings(names)
@@ -694,7 +713,7 @@ func normalizePipNames(values []string) []string {
 		if name == "" {
 			continue
 		}
-		out = append(out, normalizePipName(name))
+		out = append(out, shared.NormalizePipName(name))
 	}
 	return out
 }
@@ -850,10 +869,10 @@ func parseAptSource(value string) (aptSource, error) {
 	return source, nil
 }
 
-func doRequest(ctx context.Context, url string, user string, apiKey string, cfg httpRetryConfig) (*http.Response, error) {
-	client := &http.Client{Timeout: cfg.timeout}
+func (c *repoClient) doRequest(ctx context.Context, url string) (*http.Response, error) {
+	client := &http.Client{Timeout: c.httpCfg.timeout}
 	var lastErr error
-	for attempt := 0; attempt < cfg.retries; attempt++ {
+	for attempt := 0; attempt < c.httpCfg.retries; attempt++ {
 		if ctx.Err() != nil {
 			return nil, errbuilder.New().
 				WithCode(errbuilder.CodeInternal).
@@ -867,12 +886,12 @@ func doRequest(ctx context.Context, url string, user string, apiKey string, cfg 
 				WithMsg("failed to create request").
 				WithCause(err)
 		}
-		if strings.TrimSpace(apiKey) != "" {
-			authUser := strings.TrimSpace(user)
+		if strings.TrimSpace(c.apiKey) != "" {
+			authUser := strings.TrimSpace(c.user)
 			if authUser == "" {
 				authUser = "api"
 			}
-			req.SetBasicAuth(authUser, apiKey)
+			req.SetBasicAuth(authUser, c.apiKey)
 		}
 		resp, err := client.Do(req)
 		if err != nil {
@@ -883,8 +902,8 @@ func doRequest(ctx context.Context, url string, user string, apiKey string, cfg 
 					WithCause(ctx.Err())
 			}
 			lastErr = err
-			if attempt < cfg.retries-1 {
-				time.Sleep(httpRetryDelay(attempt, cfg))
+			if attempt < c.httpCfg.retries-1 {
+				time.Sleep(httpRetryDelay(attempt, c.httpCfg))
 				continue
 			}
 			return nil, errbuilder.New().
@@ -892,10 +911,10 @@ func doRequest(ctx context.Context, url string, user string, apiKey string, cfg 
 				WithMsg("request failed").
 				WithCause(err)
 		}
-		if (resp.StatusCode >= http.StatusInternalServerError || resp.StatusCode == http.StatusTooManyRequests) && attempt < cfg.retries-1 {
+		if (resp.StatusCode >= http.StatusInternalServerError || resp.StatusCode == http.StatusTooManyRequests) && attempt < c.httpCfg.retries-1 {
 			_, _ = io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
-			time.Sleep(httpRetryDelay(attempt, cfg))
+			time.Sleep(httpRetryDelay(attempt, c.httpCfg))
 			continue
 		}
 		return resp, nil

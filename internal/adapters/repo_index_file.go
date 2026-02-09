@@ -2,12 +2,12 @@ package adapters
 
 import (
 	"os"
-	"strings"
 
 	"github.com/ZanzyTHEbar/errbuilder-go"
 	"gopkg.in/yaml.v3"
 
 	"avular-packages/internal/ports"
+	"avular-packages/internal/shared"
 	"avular-packages/internal/types"
 )
 
@@ -33,7 +33,7 @@ func (a *RepoIndexFileAdapter) AvailableVersions(depType types.DependencyType, n
 		if versions, ok := index.Pip[name]; ok && len(versions) > 0 {
 			return versions, nil
 		}
-		normalized := normalizePipName(name)
+		normalized := shared.NormalizePipName(name)
 		if normalized != name {
 			return index.Pip[normalized], nil
 		}
@@ -97,12 +97,6 @@ func (a *RepoIndexFileAdapter) load() (types.RepoIndexFile, error) {
 	a.cached = idx
 	a.loaded = true
 	return idx, nil
-}
-
-func normalizePipName(value string) string {
-	lower := strings.ToLower(strings.TrimSpace(value))
-	replacer := strings.NewReplacer("_", "-", ".", "-")
-	return replacer.Replace(lower)
 }
 
 var _ ports.RepoIndexPort = (*RepoIndexFileAdapter)(nil)

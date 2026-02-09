@@ -40,7 +40,7 @@ func (a RepoSnapshotFileAdapter) Publish(ctx context.Context, snapshotID string)
 			WithMsg("snapshot id contains path separator")
 	}
 	snapshotsDir := filepath.Join(a.Dir, "snapshots")
-	if err := os.MkdirAll(snapshotsDir, 0755); err != nil {
+	if err := os.MkdirAll(snapshotsDir, 0o750); err != nil {
 		return errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("failed to create snapshots directory").
@@ -86,7 +86,7 @@ func (a RepoSnapshotFileAdapter) Promote(ctx context.Context, snapshotID string,
 			WithMsg("snapshot id contains path separator")
 	}
 	channelsDir := filepath.Join(a.Dir, "channels")
-	if err := os.MkdirAll(channelsDir, 0755); err != nil {
+	if err := os.MkdirAll(channelsDir, 0o750); err != nil {
 		return errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("failed to create channels directory").

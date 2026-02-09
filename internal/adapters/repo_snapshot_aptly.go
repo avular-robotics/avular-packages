@@ -10,6 +10,7 @@ import (
 	"github.com/ZanzyTHEbar/errbuilder-go"
 
 	"avular-packages/internal/ports"
+	"avular-packages/internal/shared"
 	"avular-packages/internal/types"
 )
 
@@ -183,7 +184,7 @@ func (a RepoSnapshotAptlyAdapter) runAptly(ctx context.Context, args ...string) 
 		return errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("aptly command failed").
-			WithCause(fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), err))
+			WithCause(shared.CommandError(output, err))
 	}
 	return nil
 }
@@ -195,7 +196,7 @@ func (a RepoSnapshotAptlyAdapter) runAptlyOutput(ctx context.Context, args ...st
 		return "", errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("aptly command failed").
-			WithCause(fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), err))
+			WithCause(shared.CommandError(output, err))
 	}
 	return string(output), nil
 }

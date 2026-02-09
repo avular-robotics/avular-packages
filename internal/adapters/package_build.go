@@ -15,6 +15,7 @@ import (
 	"github.com/ZanzyTHEbar/errbuilder-go"
 
 	"avular-packages/internal/ports"
+	"avular-packages/internal/shared"
 	"avular-packages/internal/types"
 )
 
@@ -37,7 +38,7 @@ func (a PackageBuildAdapter) BuildDebs(inputDir string, outputDir string) error 
 			WithCode(errbuilder.CodeInvalidArgument).
 			WithMsg("output directory is empty")
 	}
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := os.MkdirAll(outputDir, 0o750); err != nil {
 		return errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("failed to create output directory").
@@ -62,99 +63,30 @@ func (a PackageBuildAdapter) BuildDebs(inputDir string, outputDir string) error 
 	return buildPythonDebsFromManifest(manifest, pipDeps, outputDir, a.PipIndexURL)
 }
 
+// groupDeps pairs a packaging group with its resolved pip dependencies.
+type groupDeps struct {
+	group types.PackagingGroup
+	deps  []types.ResolvedDependency
+}
+
 func buildPythonDebsFromManifest(manifest []types.BundleManifestEntry, pipDeps []types.ResolvedDependency, debsDir string, pipIndexURL string) error {
-	pipSet := map[string]struct{}{}
-	for _, dep := range pipDeps {
-		if dep.Type != types.DependencyTypePip {
-			continue
-		}
-		pipSet[dep.Package] = struct{}{}
+	grouped, err := groupManifestByPip(manifest, pipDeps)
+	if err != nil {
+		return err
 	}
-
-	type groupDeps struct {
-		group types.PackagingGroup
-		deps  []types.ResolvedDependency
-	}
-	grouped := map[string]*groupDeps{}
-
-	for _, entry := range manifest {
-		if _, ok := pipSet[entry.Package]; !ok {
-			continue
-		}
-		groupEntry, ok := grouped[entry.Group]
-		if !ok {
-			groupEntry = &groupDeps{
-				group: types.PackagingGroup{
-					Name: entry.Group,
-					Mode: entry.Mode,
-				},
-			}
-			grouped[entry.Group] = groupEntry
-		}
-		if groupEntry.group.Mode != entry.Mode {
-			return errbuilder.New().
-				WithCode(errbuilder.CodeInvalidArgument).
-				WithMsg(fmt.Sprintf("bundle manifest mode mismatch for group %s", entry.Group))
-		}
-		groupEntry.deps = append(groupEntry.deps, types.ResolvedDependency{
-			Type:    types.DependencyTypePip,
-			Package: entry.Package,
-			Version: entry.Version,
-		})
-	}
-
-	var groupNames []string
-	for name := range grouped {
-		groupNames = append(groupNames, name)
-	}
-	sort.Strings(groupNames)
-
 	built := map[string]string{}
-	for _, name := range groupNames {
-		entry := grouped[name]
+	for _, entry := range grouped {
 		sort.Slice(entry.deps, func(i, j int) bool {
 			return entry.deps[i].Package < entry.deps[j].Package
 		})
 		switch entry.group.Mode {
 		case types.PackagingModeIndividual:
-			resolved, err := resolvePipDependencies(entry.deps, pipIndexURL)
-			if err != nil {
+			if err := buildResolvedPipDebs(entry.deps, pipIndexURL, debsDir, built); err != nil {
 				return err
-			}
-			for _, dep := range resolved.Packages {
-				if existing, ok := built[dep.Package]; ok {
-					if existing != dep.Version {
-						return errbuilder.New().
-							WithCode(errbuilder.CodeInvalidArgument).
-							WithMsg(fmt.Sprintf("pip dependency version mismatch for %s: %s vs %s", dep.Package, existing, dep.Version))
-					}
-					continue
-				}
-				debDepends := pipDebDepends(dep.Package, resolved)
-				if err := buildPythonPackageDeb(dep.Package, dep.Version, debsDir, pipIndexURL, debDepends); err != nil {
-					return err
-				}
-				built[dep.Package] = dep.Version
 			}
 		case types.PackagingModeMetaBundle:
-			resolved, err := resolvePipDependencies(entry.deps, pipIndexURL)
-			if err != nil {
+			if err := buildResolvedPipDebs(entry.deps, pipIndexURL, debsDir, built); err != nil {
 				return err
-			}
-			for _, dep := range resolved.Packages {
-				if existing, ok := built[dep.Package]; ok {
-					if existing != dep.Version {
-						return errbuilder.New().
-							WithCode(errbuilder.CodeInvalidArgument).
-							WithMsg(fmt.Sprintf("pip dependency version mismatch for %s: %s vs %s", dep.Package, existing, dep.Version))
-					}
-					continue
-				}
-				debDepends := pipDebDepends(dep.Package, resolved)
-				if err := buildPythonPackageDeb(dep.Package, dep.Version, debsDir, pipIndexURL, debDepends); err != nil {
-					return err
-				}
-				built[dep.Package] = dep.Version
 			}
 			if err := buildMetaBundleDeb(entry.group.Name, entry.deps, debsDir); err != nil {
 				return err
@@ -172,6 +104,76 @@ func buildPythonDebsFromManifest(manifest []types.BundleManifestEntry, pipDeps [
 	return nil
 }
 
+// groupManifestByPip filters and groups manifest entries that match pip
+// dependencies, returning them sorted by group name.
+func groupManifestByPip(manifest []types.BundleManifestEntry, pipDeps []types.ResolvedDependency) ([]groupDeps, error) {
+	pipSet := map[string]struct{}{}
+	for _, dep := range pipDeps {
+		if dep.Type != types.DependencyTypePip {
+			continue
+		}
+		pipSet[dep.Package] = struct{}{}
+	}
+	grouped := map[string]*groupDeps{}
+	for _, entry := range manifest {
+		if _, ok := pipSet[entry.Package]; !ok {
+			continue
+		}
+		ge, ok := grouped[entry.Group]
+		if !ok {
+			ge = &groupDeps{
+				group: types.PackagingGroup{Name: entry.Group, Mode: entry.Mode},
+			}
+			grouped[entry.Group] = ge
+		}
+		if ge.group.Mode != entry.Mode {
+			return nil, errbuilder.New().
+				WithCode(errbuilder.CodeInvalidArgument).
+				WithMsg(fmt.Sprintf("bundle manifest mode mismatch for group %s", entry.Group))
+		}
+		ge.deps = append(ge.deps, types.ResolvedDependency{
+			Type:    types.DependencyTypePip,
+			Package: entry.Package,
+			Version: entry.Version,
+		})
+	}
+	var names []string
+	for name := range grouped {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	result := make([]groupDeps, 0, len(names))
+	for _, name := range names {
+		result = append(result, *grouped[name])
+	}
+	return result, nil
+}
+
+// buildResolvedPipDebs resolves pip dependencies, builds individual .deb
+// packages, and tracks built versions to detect mismatches.
+func buildResolvedPipDebs(deps []types.ResolvedDependency, pipIndexURL string, debsDir string, built map[string]string) error {
+	resolved, err := resolvePipDependencies(deps, pipIndexURL)
+	if err != nil {
+		return err
+	}
+	for _, dep := range resolved.Packages {
+		if existing, ok := built[dep.Package]; ok {
+			if existing != dep.Version {
+				return errbuilder.New().
+					WithCode(errbuilder.CodeInvalidArgument).
+					WithMsg(fmt.Sprintf("pip dependency version mismatch for %s: %s vs %s", dep.Package, existing, dep.Version))
+			}
+			continue
+		}
+		debDepends := pipDebDepends(dep.Package, resolved)
+		if err := buildPythonPackageDeb(dep.Package, dep.Version, debsDir, pipIndexURL, debDepends); err != nil {
+			return err
+		}
+		built[dep.Package] = dep.Version
+	}
+	return nil
+}
+
 func buildPythonPackageDeb(name string, version string, debsDir string, pipIndexURL string, debDepends []string) error {
 	packageName := buildDebPackageNameParts("python3", name)
 	staging, err := os.MkdirTemp("", "avular-python-")
@@ -184,14 +186,14 @@ func buildPythonPackageDeb(name string, version string, debsDir string, pipIndex
 	defer os.RemoveAll(staging)
 
 	controlDir := filepath.Join(staging, "DEBIAN")
-	if err := os.MkdirAll(controlDir, 0755); err != nil {
+	if err := os.MkdirAll(controlDir, 0o750); err != nil {
 		return errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("failed to create control directory").
 			WithCause(err)
 	}
 	sitePackages := filepath.Join(staging, "usr", "lib", "python3", "dist-packages")
-	if err := os.MkdirAll(sitePackages, 0755); err != nil {
+	if err := os.MkdirAll(sitePackages, 0o750); err != nil {
 		return errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("failed to create site-packages directory").
@@ -226,7 +228,7 @@ func buildMetaBundleDeb(groupName string, deps []types.ResolvedDependency, debsD
 	defer os.RemoveAll(staging)
 
 	controlDir := filepath.Join(staging, "DEBIAN")
-	if err := os.MkdirAll(controlDir, 0755); err != nil {
+	if err := os.MkdirAll(controlDir, 0o750); err != nil {
 		return errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("failed to create control directory").
@@ -260,14 +262,14 @@ func buildFatBundleDeb(groupName string, deps []types.ResolvedDependency, debsDi
 	defer os.RemoveAll(staging)
 
 	controlDir := filepath.Join(staging, "DEBIAN")
-	if err := os.MkdirAll(controlDir, 0755); err != nil {
+	if err := os.MkdirAll(controlDir, 0o750); err != nil {
 		return errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("failed to create control directory").
 			WithCause(err)
 	}
 	sitePackages := filepath.Join(staging, "usr", "lib", "python3", "dist-packages")
-	if err := os.MkdirAll(sitePackages, 0755); err != nil {
+	if err := os.MkdirAll(sitePackages, 0o750); err != nil {
 		return errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("failed to create site-packages directory").
@@ -305,7 +307,7 @@ func pipInstall(targetDir string, deps []types.ResolvedDependency, pipIndexURL s
 		return errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("pip install failed").
-			WithCause(fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), err))
+			WithCause(shared.CommandError(output, err))
 	}
 	return nil
 }
@@ -370,7 +372,7 @@ func resolvePipDependencies(deps []types.ResolvedDependency, pipIndexURL string)
 			if strings.TrimSpace(reqName) == "" {
 				continue
 			}
-			reqName = normalizePipName(reqName)
+			reqName = shared.NormalizePipName(reqName)
 			if reqName == normalized {
 				continue
 			}
@@ -420,7 +422,7 @@ func pipList(targetDir string) (map[string]string, error) {
 	}
 	versions := map[string]string{}
 	for _, entry := range entries {
-		name := normalizePipName(entry.Name)
+		name := shared.NormalizePipName(entry.Name)
 		if strings.TrimSpace(name) == "" {
 			continue
 		}
@@ -466,7 +468,7 @@ func readPipMetadata(targetDir string) (map[string]pipMetadata, error) {
 		if strings.TrimSpace(name) == "" || strings.TrimSpace(version) == "" {
 			continue
 		}
-		normalized := normalizePipName(name)
+		normalized := shared.NormalizePipName(name)
 		metadata[normalized] = pipMetadata{
 			Name:     name,
 			Version:  version,
@@ -570,7 +572,7 @@ func buildDeb(stagingDir string, outputPath string) error {
 		return errbuilder.New().
 			WithCode(errbuilder.CodeInternal).
 			WithMsg("dpkg-deb build failed").
-			WithCause(fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), err))
+			WithCause(shared.CommandError(output, err))
 	}
 	return nil
 }
