@@ -332,9 +332,11 @@ inputs:
 ```
 inline schema (spec `schema:` field)        (loaded first = lowest precedence)
   ↓ overridden by
+auto-discovered  schemas/*.yaml             (alphabetical, next to product spec)
+  ↓ overridden by
 spec schema_files (profile → product)
   ↓ overridden by
-CLI --schema flag                            (loaded last = highest precedence)
+CLI --schema flag                           (loaded last = highest precedence)
 ```
 
 ## 11) Spec Defaults
@@ -395,6 +397,8 @@ compose:
 
 ## 13) Auto-Discovery
 
+### 13.1 Product Auto-Discovery
+
 When `--product` is not provided, the CLI searches for product specs in conventional locations:
 
 1. `product.yaml`
@@ -408,6 +412,32 @@ Combined with spec defaults, this enables a zero-flag workflow:
 # Just run it -- product auto-discovered, defaults from spec
 avular-packages resolve
 ```
+
+### 13.2 Schema Auto-Discovery
+
+When a product spec is loaded, the resolver automatically looks for a `schemas/` directory next to the product file. Any `.yaml` or `.yml` files found are loaded alphabetically and placed in the schema precedence chain between inline schemas and explicit `schema_files`:
+
+```
+inline schema (spec `schema:` field)     (lowest)
+  ↓ overridden by
+auto-discovered  schemas/*.yaml           (alphabetical order)
+  ↓ overridden by
+explicit schema_files (from spec)
+  ↓ overridden by
+CLI --schema flag                         (highest)
+```
+
+Example directory layout:
+
+```
+my-project/
+  product.yaml
+  schemas/
+    ros-humble.yaml       # auto-discovered
+    platform-extras.yaml  # auto-discovered
+```
+
+No configuration needed -- if the `schemas/` directory exists, its contents are loaded automatically.
 
 ## 14) CLI Flags
 
@@ -459,4 +489,84 @@ Dependencies from all sources merge into a single resolution graph:
 4. schema-resolved ROS tags
 5. repo-index available versions
 6. SAT solver (if --apt-sat-solver)   (transitive closure)
+```
+
+## 16) Configuration File
+
+In addition to CLI flags, spec defaults, and environment variables, `avular-packages` supports a YAML config file for persistent settings via [Viper](https://github.com/spf13/viper).
+
+### 16.1 Config File Locations
+
+The CLI looks for configuration in this order:
+
+1. **Explicit path** -- `--config <path>` flag (highest priority).
+2. **Current directory** -- `./avular-packages.yaml`.
+3. **Home config** -- `$HOME/.config/avular-packages/avular-packages.yaml`.
+
+### 16.2 Config File Format
+
+```yaml
+# avular-packages.yaml
+log_level: "info"                # debug | info | warn | error
+
+# Resolve / Build common flags
+product: "product.yaml"
+workspace:
+  - "./src"
+repo_index: "repo-index.yaml"
+output: "out"
+target_ubuntu: "24.04"
+schema_files:
+  - "schemas/base.yaml"
+
+# Build-specific
+debs_dir: ""
+pip_index_url: ""
+
+# Publish-specific
+repo_backend: "proget"
+
+# Boolean flags
+apt_preferences: false
+apt_install_list: false
+apt_sat_solver: false
+```
+
+### 16.3 Environment Variables
+
+Every config key maps to an environment variable with the `AVULAR_PACKAGES_` prefix. Underscores are used as separators:
+
+| Config Key | Environment Variable |
+|---|---|
+| `product` | `AVULAR_PACKAGES_PRODUCT` |
+| `workspace` | `AVULAR_PACKAGES_WORKSPACE` |
+| `repo_index` | `AVULAR_PACKAGES_REPO_INDEX` |
+| `target_ubuntu` | `AVULAR_PACKAGES_TARGET_UBUNTU` |
+| `log_level` | `AVULAR_PACKAGES_LOG_LEVEL` |
+
+### 16.4 Precedence
+
+When the same setting is specified in multiple places, the highest-precedence source wins:
+
+```
+CLI flag                   (highest)
+  ↓
+Environment variable
+  ↓
+Config file
+  ↓
+Spec defaults              (lowest)
+```
+
+This means CLI flags always win. Environment variables override config files. Config files override spec defaults. And spec defaults fill in anything not set elsewhere.
+
+### 16.5 Scaffolding
+
+Use `avular-packages init` to generate a `product.yaml` with inline schema, inline profile, and spec defaults pre-configured:
+
+```bash
+avular-packages init                      # scaffold in current directory
+avular-packages init --name my-robot      # custom product name
+avular-packages init --dir ./my-project   # specify output directory
+avular-packages init --force              # overwrite existing
 ```
