@@ -13,10 +13,16 @@ type Metadata struct {
 // spec eliminates the need for a separate config file or repetitive
 // CLI flags.
 type SpecDefaults struct {
+	// Resolve + Build common
 	TargetUbuntu string   `yaml:"target_ubuntu,omitempty"`
 	Workspace    []string `yaml:"workspace,omitempty"`
 	RepoIndex    string   `yaml:"repo_index,omitempty"`
 	Output       string   `yaml:"output,omitempty"`
+
+	// Build-specific
+	PipIndexURL    string   `yaml:"pip_index_url,omitempty"`
+	InternalDebDir string   `yaml:"internal_deb_dir,omitempty"`
+	InternalSrc    []string `yaml:"internal_src,omitempty"`
 }
 
 type ComposeRef struct {
