@@ -8,6 +8,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"avular-packages/internal/ports"
+	"avular-packages/internal/shared"
 	"avular-packages/internal/types"
 )
 
@@ -109,8 +110,27 @@ func (b DependencyBuilder) BuildFromSpecs(ctx context.Context, product types.Spe
 // BuildFromSpecsWithSchema is like BuildFromSpecs but accepts an
 // optional inline schema loaded before file-based schemas.
 func (b DependencyBuilder) BuildFromSpecsWithSchema(ctx context.Context, product types.Spec, profiles []types.Spec, inputs types.Inputs, workspaceRoots []string, inlineSchema *types.SchemaFile) ([]types.Dependency, error) {
-	var deps []types.Dependency
+	deps, err := collectManualDeps(product, profiles)
+	if err != nil {
+		return nil, err
+	}
 
+	if inputs.PackageXML.Enabled {
+		xmlDeps, err := b.collectPackageXMLDeps(ctx, inputs, workspaceRoots, inlineSchema)
+		if err != nil {
+			return nil, err
+		}
+		deps = append(deps, xmlDeps...)
+	}
+
+	log.Ctx(ctx).Debug().Int("deps", len(deps)).Msg("dependencies collected")
+	return deps, nil
+}
+
+// collectManualDeps parses manually declared apt and pip dependencies
+// from the product spec and all profile specs.
+func collectManualDeps(product types.Spec, profiles []types.Spec) ([]types.Dependency, error) {
+	var deps []types.Dependency
 	productApt, err := parseEntries(product.Inputs.Manual.Apt, types.DependencyTypeApt, "product:manual:apt")
 	if err != nil {
 		return nil, err
@@ -121,7 +141,6 @@ func (b DependencyBuilder) BuildFromSpecsWithSchema(ctx context.Context, product
 	}
 	deps = append(deps, productApt...)
 	deps = append(deps, productPip...)
-
 	for _, profile := range profiles {
 		profileApt, err := parseEntries(profile.Inputs.Manual.Apt, types.DependencyTypeApt, "profile:manual:apt")
 		if err != nil {
@@ -134,55 +153,54 @@ func (b DependencyBuilder) BuildFromSpecsWithSchema(ctx context.Context, product
 		deps = append(deps, profileApt...)
 		deps = append(deps, profilePip...)
 	}
+	return deps, nil
+}
 
-	if inputs.PackageXML.Enabled {
-		if len(workspaceRoots) == 0 {
-			return nil, errbuilder.New().
-				WithCode(errbuilder.CodeInvalidArgument).
-				WithMsg("package_xml enabled but no workspace roots provided")
-		}
-		var packageXMLPaths []string
-		for _, root := range workspaceRoots {
-			paths, err := b.Workspace.FindPackageXML(root)
-			if err != nil {
-				return nil, err
-			}
-			packageXMLPaths = append(packageXMLPaths, paths...)
-		}
-
-		// Parse export-section typed dependencies (debian_depend, pip_depend)
-		debianDeps, pipDeps, err := b.PackageXML.ParseDependencies(packageXMLPaths, inputs.PackageXML.Tags)
-		if err != nil {
-			return nil, err
-		}
-		if !inputs.PackageXML.IncludeSrc {
-			packageNames, err := b.PackageXML.ParsePackageNames(packageXMLPaths)
-			if err != nil {
-				return nil, err
-			}
-			debianDeps = filterWorkspaceDeps(debianDeps, packageNames, inputs.PackageXML.Prefix)
-			pipDeps = filterWorkspaceDeps(pipDeps, packageNames, inputs.PackageXML.Prefix)
-		}
-		debianParsed, err := parseEntries(debianDeps, types.DependencyTypeApt, "package_xml:debian_depend")
-		if err != nil {
-			return nil, err
-		}
-		pipParsed, err := parseEntries(pipDeps, types.DependencyTypePip, "package_xml:pip_depend")
-		if err != nil {
-			return nil, err
-		}
-		deps = append(deps, debianParsed...)
-		deps = append(deps, pipParsed...)
-
-		// Parse standard ROS tags and resolve through schema
-		schemaDeps, err := b.resolveROSTags(ctx, packageXMLPaths, inputs, inlineSchema)
-		if err != nil {
-			return nil, err
-		}
-		deps = append(deps, schemaDeps...)
+// collectPackageXMLDeps discovers package.xml files in the workspace
+// roots, parses their typed and ROS tag dependencies, and returns them
+// as a combined slice.
+func (b DependencyBuilder) collectPackageXMLDeps(ctx context.Context, inputs types.Inputs, workspaceRoots []string, inlineSchema *types.SchemaFile) ([]types.Dependency, error) {
+	if len(workspaceRoots) == 0 {
+		return nil, errbuilder.New().
+			WithCode(errbuilder.CodeInvalidArgument).
+			WithMsg("package_xml enabled but no workspace roots provided")
 	}
-
-	log.Ctx(ctx).Debug().Int("deps", len(deps)).Msg("dependencies collected")
+	var packageXMLPaths []string
+	for _, root := range workspaceRoots {
+		paths, err := b.Workspace.FindPackageXML(root)
+		if err != nil {
+			return nil, err
+		}
+		packageXMLPaths = append(packageXMLPaths, paths...)
+	}
+	debianDeps, pipDeps, err := b.PackageXML.ParseDependencies(packageXMLPaths, inputs.PackageXML.Tags)
+	if err != nil {
+		return nil, err
+	}
+	if !inputs.PackageXML.IncludeSrc {
+		packageNames, err := b.PackageXML.ParsePackageNames(packageXMLPaths)
+		if err != nil {
+			return nil, err
+		}
+		debianDeps = filterWorkspaceDeps(debianDeps, packageNames, inputs.PackageXML.Prefix)
+		pipDeps = filterWorkspaceDeps(pipDeps, packageNames, inputs.PackageXML.Prefix)
+	}
+	debianParsed, err := parseEntries(debianDeps, types.DependencyTypeApt, "package_xml:debian_depend")
+	if err != nil {
+		return nil, err
+	}
+	pipParsed, err := parseEntries(pipDeps, types.DependencyTypePip, "package_xml:pip_depend")
+	if err != nil {
+		return nil, err
+	}
+	var deps []types.Dependency
+	deps = append(deps, debianParsed...)
+	deps = append(deps, pipParsed...)
+	schemaDeps, err := b.resolveROSTags(ctx, packageXMLPaths, inputs, inlineSchema)
+	if err != nil {
+		return nil, err
+	}
+	deps = append(deps, schemaDeps...)
 	return deps, nil
 }
 
@@ -302,7 +320,7 @@ func parseEntries(entries []string, depType types.DependencyType, source string)
 			return nil, err
 		}
 		if depType == types.DependencyTypePip {
-			constraint.Name = normalizePipName(constraint.Name)
+			constraint.Name = shared.NormalizePipName(constraint.Name)
 		}
 		deps = append(deps, types.Dependency{
 			Name:        constraint.Name,
@@ -336,8 +354,3 @@ func filterWorkspaceDeps(deps []string, workspaceNames []string, prefix string) 
 	return filtered
 }
 
-func normalizePipName(value string) string {
-	lower := strings.ToLower(strings.TrimSpace(value))
-	replacer := strings.NewReplacer("_", "-", ".", "-")
-	return replacer.Replace(lower)
-}

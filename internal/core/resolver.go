@@ -11,6 +11,7 @@ import (
 
 	"avular-packages/internal/policies"
 	"avular-packages/internal/ports"
+	"avular-packages/internal/shared"
 	"avular-packages/internal/types"
 )
 
@@ -106,44 +107,8 @@ func (r ResolverCore) Resolve(ctx context.Context, deps []types.Dependency, dire
 	}
 
 	if r.UseAptSolver && len(aptSolverDeps) > 0 {
-		solved, err := resolveAptWithSolver(ctx, r.RepoIndex, mapValues(aptSolverDeps))
-		if err != nil {
+		if err := r.mergeSATSolverResults(ctx, &result, aptSolverDeps, aptSolverGroups); err != nil {
 			return ResolveResult{}, err
-		}
-		lockSet := map[string]string{}
-		for _, entry := range result.AptLocks {
-			lockSet[entry.Package] = entry.Version
-		}
-		for name, version := range solved {
-			lockSet[name] = version
-			result.ResolvedDeps = append(result.ResolvedDeps, types.ResolvedDependency{
-				Type:    types.DependencyTypeApt,
-				Package: name,
-				Version: version,
-			})
-		}
-		result.AptLocks = result.AptLocks[:0]
-		for name, version := range lockSet {
-			result.AptLocks = append(result.AptLocks, types.AptLockEntry{
-				Package: name,
-				Version: version,
-			})
-		}
-		for _, dep := range aptSolverDeps {
-			version, ok := solved[dep.Name]
-			if !ok {
-				continue
-			}
-			group, ok := aptSolverGroups[dep.Name]
-			if !ok {
-				continue
-			}
-			result.BundleManifest = append(result.BundleManifest, types.BundleManifestEntry{
-				Group:   group.Name,
-				Mode:    group.Mode,
-				Package: dep.Name,
-				Version: version,
-			})
 		}
 	}
 
@@ -153,6 +118,52 @@ func (r ResolverCore) Resolve(ctx context.Context, deps []types.Dependency, dire
 
 	log.Ctx(ctx).Debug().Int("resolved", len(result.AptLocks)).Msg("resolver completed")
 	return result, nil
+}
+
+// mergeSATSolverResults runs the APT SAT solver and merges the results
+// into the existing ResolveResult, updating locks, resolved deps, and
+// the bundle manifest.
+func (r ResolverCore) mergeSATSolverResults(ctx context.Context, result *ResolveResult, aptSolverDeps map[string]types.Dependency, aptSolverGroups map[string]types.PackagingGroup) error {
+	solved, err := resolveAptWithSolver(ctx, r.RepoIndex, mapValues(aptSolverDeps))
+	if err != nil {
+		return err
+	}
+	lockSet := map[string]string{}
+	for _, entry := range result.AptLocks {
+		lockSet[entry.Package] = entry.Version
+	}
+	for name, version := range solved {
+		lockSet[name] = version
+		result.ResolvedDeps = append(result.ResolvedDeps, types.ResolvedDependency{
+			Type:    types.DependencyTypeApt,
+			Package: name,
+			Version: version,
+		})
+	}
+	result.AptLocks = result.AptLocks[:0]
+	for name, version := range lockSet {
+		result.AptLocks = append(result.AptLocks, types.AptLockEntry{
+			Package: name,
+			Version: version,
+		})
+	}
+	for _, dep := range aptSolverDeps {
+		version, ok := solved[dep.Name]
+		if !ok {
+			continue
+		}
+		group, ok := aptSolverGroups[dep.Name]
+		if !ok {
+			continue
+		}
+		result.BundleManifest = append(result.BundleManifest, types.BundleManifestEntry{
+			Group:   group.Name,
+			Mode:    group.Mode,
+			Package: dep.Name,
+			Version: version,
+		})
+	}
+	return nil
 }
 
 // prepareDependency applies a resolution directive (if one exists) to a
@@ -336,7 +347,7 @@ func normalizeDirectiveKey(value string) string {
 	depType := strings.ToLower(strings.TrimSpace(parts[0]))
 	name := strings.TrimSpace(parts[1])
 	if depType == "pip" {
-		name = normalizePipName(name)
+		name = shared.NormalizePipName(name)
 	}
 	return fmt.Sprintf("%s:%s", depType, name)
 }

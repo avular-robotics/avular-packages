@@ -244,3 +244,127 @@ func TestMergeInputsAppendsManualDeps(t *testing.T) {
 	assert.Equal(t, []string{"a", "b"}, target.Manual.Apt)
 	assert.Equal(t, []string{"x", "y"}, target.Manual.Python)
 }
+
+// ---------------------------------------------------------------------------
+// mergeSchema
+// ---------------------------------------------------------------------------
+
+func TestMergeSchemaProfileIntoProduct(t *testing.T) {
+	composer := NewProductComposer()
+	profile := types.Spec{
+		Kind:     types.SpecKindProfile,
+		Metadata: types.Metadata{Name: "base"},
+		Schema: &types.SchemaFile{
+			SchemaVersion: "v1",
+			Mappings: map[string]types.SchemaMapping{
+				"rclcpp": {Type: types.DependencyTypeApt, Package: "ros-humble-rclcpp"},
+				"numpy":  {Type: types.DependencyTypePip, Package: "numpy"},
+			},
+		},
+	}
+	product := types.Spec{
+		Kind:     types.SpecKindProduct,
+		Metadata: types.Metadata{Name: "prod"},
+		Schema: &types.SchemaFile{
+			SchemaVersion: "v1",
+			Mappings: map[string]types.SchemaMapping{
+				"numpy": {Type: types.DependencyTypePip, Package: "numpy", Version: ">=2.0"},
+				"fmt":   {Type: types.DependencyTypeApt, Package: "libfmt-dev"},
+			},
+		},
+	}
+
+	result, err := composer.Compose(context.Background(), product, []types.Spec{profile})
+	require.NoError(t, err)
+	require.NotNil(t, result.Schema)
+	assert.Len(t, result.Schema.Mappings, 3)
+	// Profile's rclcpp preserved
+	assert.Equal(t, "ros-humble-rclcpp", result.Schema.Mappings["rclcpp"].Package)
+	// Product's numpy overrides profile's numpy
+	assert.Equal(t, ">=2.0", result.Schema.Mappings["numpy"].Version)
+	// Product's fmt added
+	assert.Equal(t, "libfmt-dev", result.Schema.Mappings["fmt"].Package)
+}
+
+func TestMergeSchemaNoSchemaOnEitherSide(t *testing.T) {
+	composer := NewProductComposer()
+	profile := types.Spec{
+		Kind:     types.SpecKindProfile,
+		Metadata: types.Metadata{Name: "base"},
+	}
+	product := types.Spec{
+		Kind:     types.SpecKindProduct,
+		Metadata: types.Metadata{Name: "prod"},
+	}
+
+	result, err := composer.Compose(context.Background(), product, []types.Spec{profile})
+	require.NoError(t, err)
+	assert.Nil(t, result.Schema)
+}
+
+func TestMergeSchemaOnlyOnProduct(t *testing.T) {
+	composer := NewProductComposer()
+	profile := types.Spec{
+		Kind:     types.SpecKindProfile,
+		Metadata: types.Metadata{Name: "base"},
+	}
+	product := types.Spec{
+		Kind:     types.SpecKindProduct,
+		Metadata: types.Metadata{Name: "prod"},
+		Schema: &types.SchemaFile{
+			SchemaVersion: "v1",
+			Mappings: map[string]types.SchemaMapping{
+				"rclcpp": {Type: types.DependencyTypeApt, Package: "ros-humble-rclcpp"},
+			},
+		},
+	}
+
+	result, err := composer.Compose(context.Background(), product, []types.Spec{profile})
+	require.NoError(t, err)
+	require.NotNil(t, result.Schema)
+	assert.Len(t, result.Schema.Mappings, 1)
+	assert.Equal(t, "ros-humble-rclcpp", result.Schema.Mappings["rclcpp"].Package)
+}
+
+func TestMergeSchemaMultipleProfilesLayered(t *testing.T) {
+	composer := NewProductComposer()
+	profile1 := types.Spec{
+		Kind:     types.SpecKindProfile,
+		Metadata: types.Metadata{Name: "p1"},
+		Schema: &types.SchemaFile{
+			SchemaVersion: "v1",
+			Mappings: map[string]types.SchemaMapping{
+				"rclcpp": {Type: types.DependencyTypeApt, Package: "old-rclcpp"},
+				"a":      {Type: types.DependencyTypeApt, Package: "pkg-a"},
+			},
+		},
+	}
+	profile2 := types.Spec{
+		Kind:     types.SpecKindProfile,
+		Metadata: types.Metadata{Name: "p2"},
+		Schema: &types.SchemaFile{
+			SchemaVersion: "v1",
+			Mappings: map[string]types.SchemaMapping{
+				"rclcpp": {Type: types.DependencyTypeApt, Package: "new-rclcpp"},
+				"b":      {Type: types.DependencyTypePip, Package: "pkg-b"},
+			},
+		},
+	}
+	product := types.Spec{
+		Kind:     types.SpecKindProduct,
+		Metadata: types.Metadata{Name: "prod"},
+		Compose: []types.ComposeRef{
+			{Name: "p1", Version: "1"},
+			{Name: "p2", Version: "1"},
+		},
+	}
+
+	result, err := composer.Compose(context.Background(), product, []types.Spec{profile1, profile2})
+	require.NoError(t, err)
+	require.NotNil(t, result.Schema)
+	// profile2 overrides profile1's rclcpp
+	assert.Equal(t, "new-rclcpp", result.Schema.Mappings["rclcpp"].Package)
+	// Both unique keys present
+	assert.Equal(t, "pkg-a", result.Schema.Mappings["a"].Package)
+	assert.Equal(t, "pkg-b", result.Schema.Mappings["b"].Package)
+}
