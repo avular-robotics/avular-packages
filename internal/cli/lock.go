@@ -10,7 +10,7 @@ func newLockCommand() *cobra.Command {
 		Use:   "lock",
 		Short: "Resolve dependencies and produce lock outputs",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runResolve(cmd.Context(), cmd, resolveOptions(opts))
+			return runResolve(cmd.Context(), cmd, opts)
 		},
 	}
 

@@ -290,6 +290,7 @@ func fetchAptPackages(ctx context.Context, url string, user string, apiKey strin
 	return index, false, nil
 }
 
+//nolint:gocyclo // APT Packages file parser inherently branches on many field names
 func parseAptPackages(reader io.Reader) (map[string]map[string]types.AptPackageVersion, error) {
 	packages := map[string]map[string]types.AptPackageVersion{}
 	buffered := bufio.NewReader(reader)

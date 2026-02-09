@@ -204,11 +204,11 @@ func satisfiesDeb(version string, constraints []preparedConstraint, cache *versi
 				return false, nil
 			}
 		case types.ConstraintOpGte:
-			if !(v.GreaterThan(c) || v.Equal(c)) {
+			if v.LessThan(c) && !v.Equal(c) {
 				return false, nil
 			}
 		case types.ConstraintOpLte:
-			if !(v.LessThan(c) || v.Equal(c)) {
+			if v.GreaterThan(c) && !v.Equal(c) {
 				return false, nil
 			}
 		case types.ConstraintOpGt:

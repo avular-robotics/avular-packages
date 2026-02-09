@@ -1,0 +1,84 @@
+version: "2"
+
+run:
+  go: "1.25"
+  timeout: 5m
+  tests: true
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+linters:
+  default: none
+  enable:
+    # Correctness
+    - errcheck
+    - govet
+    - staticcheck
+    - ineffassign
+    # Style
+    - misspell
+    - revive
+    - unconvert
+    # Complexity
+    - gocyclo
+    - goconst
+    - nakedret
+    # Security
+    - gosec
+
+  settings:
+    gocyclo:
+      min-complexity: 25
+    goconst:
+      min-len: 3
+      min-occurrences: 5
+    nakedret:
+      max-func-lines: 30
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: exported
+          disabled: true
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: var-declaration
+    errcheck:
+      exclude-functions:
+        - "(*os.File).Close"
+        - "(io.Closer).Close"
+        - "(*compress/gzip.Reader).Close"
+        - "(*net/http.Response).Body.Close"
+        - "os.RemoveAll"
+    gosec:
+      excludes:
+        - G104  # unhandled errors on deferred Close
+        - G204  # subprocess with variable args -- intentional for dpkg-buildpackage
+        - G301  # directory permissions 0755 is fine for build tooling
+        - G304  # file inclusion via variable -- necessary for our adapter pattern
+        - G306  # WriteFile permissions 0644 is fine for build artifacts
+
+issues:
+  max-issues-per-linter: 50
+  max-same-issues: 5
+  exclude-dirs:
+    - out
+    - vendor
+  exclude-rules:
+    # Test files get relaxed rules
+    - path: _test\.go
+      linters:
+        - goconst
+        - gosec
+        - gocyclo
+        - errcheck

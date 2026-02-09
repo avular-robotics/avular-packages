@@ -17,14 +17,7 @@ const (
 )
 
 func ApplyResolution(dep types.Dependency, directive types.ResolutionDirective) (types.Dependency, types.ResolutionRecord, error) {
-	record := types.ResolutionRecord{
-		Dependency: directive.Dependency,
-		Action:     directive.Action,
-		Value:      directive.Value,
-		Reason:     directive.Reason,
-		Owner:      directive.Owner,
-		ExpiresAt:  directive.ExpiresAt,
-	}
+	record := types.ResolutionRecord(directive)
 
 	switch strings.ToLower(directive.Action) {
 	case ActionForce:

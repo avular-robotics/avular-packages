@@ -100,7 +100,7 @@ func buildSolverState(aptPackages map[string][]types.AptPackageVersion) aptSolve
 			s.varMeta[id] = entry
 			s.varKey[id] = aptVarKey{Name: name, Version: entry.Version}
 			weight := len(ordered) - 1 - i
-			s.costLits = append(s.costLits, solver.IntToLit(int32(id)))
+			s.costLits = append(s.costLits, solver.IntToLit(int32(id))) //nolint:gosec // id is bounded by the number of package versions, well within int32 range
 			s.costWeights = append(s.costWeights, weight)
 		}
 		if len(ids) > 0 {
