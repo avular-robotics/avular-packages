@@ -13,6 +13,7 @@ import (
 	"avular-packages/internal/adapters"
 	"avular-packages/internal/core"
 	"avular-packages/internal/policies"
+	"avular-packages/tests/testutil"
 	"avular-packages/internal/types"
 )
 
@@ -23,8 +24,8 @@ import (
 // To update golden files after an intentional change, delete the
 // testdata/golden/ directory and re-run the test.
 func TestGoldenResolve(t *testing.T) {
-	root := repoRoot(t)
-	goldenDir := filepath.Join(root, "internal", "integration", "testdata", "golden")
+	root := testutil.RepoRoot(t)
+	goldenDir := filepath.Join(root, "tests", "integration", "testdata", "golden")
 
 	specAdapter := adapters.NewSpecFileAdapter()
 	productPath := filepath.Join(root, "fixtures/product-sample.yaml")
@@ -90,7 +91,7 @@ func TestGoldenResolve(t *testing.T) {
 // TestGoldenResolveStructure verifies the structural properties of the
 // resolve output independent of exact values -- counts, names present, etc.
 func TestGoldenResolveStructure(t *testing.T) {
-	root := repoRoot(t)
+	root := testutil.RepoRoot(t)
 
 	specAdapter := adapters.NewSpecFileAdapter()
 	productPath := filepath.Join(root, "fixtures/product-sample.yaml")
@@ -181,7 +182,7 @@ func TestGoldenResolveStructure(t *testing.T) {
 // TestGoldenDependencyBuilder verifies that the dependency builder
 // correctly extracts dependencies from fixtures.
 func TestGoldenDependencyBuilder(t *testing.T) {
-	root := repoRoot(t)
+	root := testutil.RepoRoot(t)
 	workspace := filepath.Join(root, "fixtures/workspace")
 
 	specAdapter := adapters.NewSpecFileAdapter()

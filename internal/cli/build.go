@@ -18,6 +18,7 @@ type buildOptions struct {
 	OutputDir            string
 	DebsDir              string
 	TargetUbuntu         string
+	SchemaFiles          []string
 	PipIndexURL          string
 	InternalDebDir       string
 	InternalSrc          []string
@@ -47,6 +48,7 @@ func newBuildCommand() *cobra.Command {
 	cmd.Flags().StringVar(&opts.OutputDir, "output", "out", "Output directory")
 	cmd.Flags().StringVar(&opts.DebsDir, "debs-dir", "", "Directory for built debs")
 	cmd.Flags().StringVar(&opts.TargetUbuntu, "target-ubuntu", "", "Target Ubuntu release")
+	cmd.Flags().StringSliceVar(&opts.SchemaFiles, "schema", nil, "Schema mapping file(s) for ROS tag resolution (layered, last wins)")
 	cmd.Flags().StringVar(&opts.PipIndexURL, "pip-index-url", "", "Optional PIP index URL override")
 	cmd.Flags().StringVar(&opts.InternalDebDir, "internal-deb-dir", "", "Directory containing prebuilt internal debs")
 	cmd.Flags().StringSliceVar(&opts.InternalSrc, "internal-src", nil, "Internal package source directory (debian)")
@@ -65,6 +67,7 @@ func newBuildCommand() *cobra.Command {
 	_ = viper.BindPFlag("output", cmd.Flags().Lookup("output"))
 	_ = viper.BindPFlag("debs_dir", cmd.Flags().Lookup("debs-dir"))
 	_ = viper.BindPFlag("target_ubuntu", cmd.Flags().Lookup("target-ubuntu"))
+	_ = viper.BindPFlag("schema_files", cmd.Flags().Lookup("schema"))
 	_ = viper.BindPFlag("pip_index_url", cmd.Flags().Lookup("pip-index-url"))
 	_ = viper.BindPFlag("internal_deb_dir", cmd.Flags().Lookup("internal-deb-dir"))
 	_ = viper.BindPFlag("internal_src", cmd.Flags().Lookup("internal-src"))
@@ -89,6 +92,7 @@ func runBuild(ctx context.Context, cmd *cobra.Command, opts buildOptions) error 
 		OutputDir:            resolveString(cmd, opts.OutputDir, "output", "output"),
 		DebsDir:              resolveString(cmd, opts.DebsDir, "debs_dir", "debs-dir"),
 		TargetUbuntu:         resolveString(cmd, opts.TargetUbuntu, "target_ubuntu", "target-ubuntu"),
+		SchemaFiles:          resolveStrings(cmd, opts.SchemaFiles, "schema_files", "schema"),
 		PipIndexURL:          resolveString(cmd, opts.PipIndexURL, "pip_index_url", "pip-index-url"),
 		InternalDebDir:       resolveString(cmd, opts.InternalDebDir, "internal_deb_dir", "internal-deb-dir"),
 		InternalSrc:          resolveStrings(cmd, opts.InternalSrc, "internal_src", "internal-src"),

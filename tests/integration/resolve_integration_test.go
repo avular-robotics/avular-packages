@@ -11,10 +11,11 @@ import (
 	"avular-packages/internal/core"
 	"avular-packages/internal/policies"
 	"avular-packages/internal/types"
+	"avular-packages/tests/testutil"
 )
 
 func TestResolveIntegration(t *testing.T) {
-	root := repoRoot(t)
+	root := testutil.RepoRoot(t)
 	specAdapter := adapters.NewSpecFileAdapter()
 	productPath := filepath.Join(root, "fixtures/product-sample.yaml")
 	repoIndex := filepath.Join(root, "fixtures/repo-index.yaml")
@@ -64,10 +65,5 @@ func loadProfiles(adapter adapters.SpecFileAdapter, product types.Spec, root str
 	return profiles, nil
 }
 
-func repoRoot(t *testing.T) string {
-	dir, err := os.Getwd()
-	require.NoError(t, err)
-	return filepath.Clean(filepath.Join(dir, "..", ".."))
-}
 
 var errUnsupportedComposeSource = os.ErrInvalid

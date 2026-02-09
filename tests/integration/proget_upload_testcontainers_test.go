@@ -25,6 +25,7 @@ import (
 	"avular-packages/internal/app"
 	"avular-packages/internal/core"
 	"avular-packages/internal/types"
+	"avular-packages/tests/testutil"
 )
 
 type progetRequest struct {
@@ -144,8 +145,7 @@ func TestE2EFixturesWithTestcontainers(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(pkgPath), 0755))
 	require.NoError(t, os.WriteFile(pkgPath, []byte(fixturePackageXML), 0644))
 
-	repoRoot, err := repoRootPath()
-	require.NoError(t, err)
+	repoRoot := testutil.RepoRoot(t)
 
 	productPath := filepath.Join(repoRoot, "fixtures", "e2e-product.yaml")
 	profilePath := filepath.Join(repoRoot, "fixtures", "e2e-profile.yaml")

@@ -33,7 +33,17 @@ func TestProGetUploadIntegration(t *testing.T) {
 		}))
 		defer server.Close()
 
-		adapter := adapters.NewRepoSnapshotProGetAdapter(server.URL, "avular", "", debsDir, "", "secret", "snap", 1, 1, 1, 1)
+		adapter := adapters.NewRepoSnapshotProGetAdapter(adapters.ProGetConfig{
+			Endpoint:       server.URL,
+			Feed:           "avular",
+			DebsDir:        debsDir,
+			APIKey:         "secret",
+			SnapshotPrefix: "snap",
+			Workers:        1,
+			TimeoutSec:     1,
+			Retries:        1,
+			RetryDelayMs:   1,
+		})
 		require.NoError(t, adapter.Publish(ctx, "abc"))
 		require.NoError(t, adapter.Promote(ctx, "abc", "dev"))
 
@@ -64,7 +74,17 @@ func TestProGetUploadIntegration(t *testing.T) {
 		}))
 		defer server.Close()
 
-		adapter := adapters.NewRepoSnapshotProGetAdapter(server.URL, "avular", "", debsDir, "", "secret", "snap", 1, 1, 1, 1)
+		adapter := adapters.NewRepoSnapshotProGetAdapter(adapters.ProGetConfig{
+			Endpoint:       server.URL,
+			Feed:           "avular",
+			DebsDir:        debsDir,
+			APIKey:         "secret",
+			SnapshotPrefix: "snap",
+			Workers:        1,
+			TimeoutSec:     1,
+			Retries:        1,
+			RetryDelayMs:   1,
+		})
 		require.NoError(t, adapter.Publish(ctx, "abc"))
 	})
 }
