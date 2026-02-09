@@ -47,6 +47,7 @@ func newRootCommand() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&cfg.LogLevel, "log-level", "info", "Log level")
 	_ = viper.BindPFlag("log_level", cmd.PersistentFlags().Lookup("log-level"))
 
+	cmd.AddCommand(newInitCommand())
 	cmd.AddCommand(newValidateCommand())
 	cmd.AddCommand(newResolveCommand())
 	cmd.AddCommand(newLockCommand())
