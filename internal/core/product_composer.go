@@ -10,8 +10,12 @@ import (
 	"avular-packages/internal/types"
 )
 
+// ProductComposer merges a product spec and its profile specs into a
+// single unified specification. Profiles are applied in compose order,
+// then the product itself is layered on top.
 type ProductComposer struct{}
 
+// NewProductComposer returns a zero-value composer.
 func NewProductComposer() ProductComposer {
 	return ProductComposer{}
 }
@@ -56,6 +60,8 @@ func (c ProductComposer) Compose(ctx context.Context, product types.Spec, profil
 	return composed, nil
 }
 
+// mergeSpec layers an incoming spec's inputs, packaging groups,
+// resolutions, and publish settings onto the target.
 func mergeSpec(target *types.Spec, incoming types.Spec) error {
 	mergeInputs(&target.Inputs, incoming.Inputs)
 	if err := mergePackagingGroups(&target.Packaging, incoming.Packaging); err != nil {
@@ -68,6 +74,8 @@ func mergeSpec(target *types.Spec, incoming types.Spec) error {
 	return nil
 }
 
+// mergeInputs appends incoming manual dependencies and package_xml tags
+// to the target, enabling flags like Enabled and IncludeSrc.
 func mergeInputs(target *types.Inputs, incoming types.Inputs) {
 	if incoming.PackageXML.Enabled {
 		target.PackageXML.Enabled = true
@@ -82,6 +90,8 @@ func mergeInputs(target *types.Inputs, incoming types.Inputs) {
 	target.Manual.Python = append(target.Manual.Python, incoming.Manual.Python...)
 }
 
+// mergePackagingGroups appends incoming groups to the target, returning
+// an error if a group name already exists (duplicates are not allowed).
 func mergePackagingGroups(target *types.Packaging, incoming types.Packaging) error {
 	existing := map[string]struct{}{}
 	for _, group := range target.Groups {
@@ -98,6 +108,8 @@ func mergePackagingGroups(target *types.Packaging, incoming types.Packaging) err
 	return nil
 }
 
+// validateComposeOrder ensures no duplicate (name@version) entries exist
+// in the compose list.
 func validateComposeOrder(compose []types.ComposeRef) error {
 	seen := map[string]struct{}{}
 	for _, ref := range compose {

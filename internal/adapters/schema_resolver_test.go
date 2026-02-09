@@ -219,3 +219,108 @@ mappings:
 	assert.True(t, resolver.HasKey("fmt"))
 	assert.False(t, resolver.HasKey("nonexistent"))
 }
+
+func TestSchemaResolverLoadInline(t *testing.T) {
+	resolver := NewSchemaResolverAdapter()
+
+	schema := types.SchemaFile{
+		SchemaVersion: "v1",
+		Mappings: map[string]types.SchemaMapping{
+			"rclcpp": {Type: types.DependencyTypeApt, Package: "ros-humble-rclcpp"},
+			"numpy":  {Type: types.DependencyTypePip, Package: "numpy", Version: ">=1.26"},
+		},
+	}
+
+	require.NoError(t, resolver.LoadSchemaInline(schema))
+
+	dep, ok, err := resolver.Resolve("rclcpp")
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "ros-humble-rclcpp", dep.Name)
+	assert.Equal(t, types.DependencyTypeApt, dep.Type)
+
+	dep, ok, err = resolver.Resolve("numpy")
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "numpy", dep.Name)
+	assert.Equal(t, types.DependencyTypePip, dep.Type)
+	require.Len(t, dep.Constraints, 1)
+	assert.Equal(t, types.ConstraintOpGte, dep.Constraints[0].Op)
+}
+
+func TestSchemaResolverInlineOverriddenByFile(t *testing.T) {
+	dir := t.TempDir()
+
+	// File schema with different numpy version
+	filePath := filepath.Join(dir, "override.yaml")
+	require.NoError(t, os.WriteFile(filePath, []byte(`
+schema_version: "v1"
+mappings:
+  numpy:
+    type: pip
+    package: numpy
+    version: "==1.26.4"
+`), 0644))
+
+	resolver := NewSchemaResolverAdapter()
+
+	// Load inline first (lower precedence)
+	inlineSchema := types.SchemaFile{
+		SchemaVersion: "v1",
+		Mappings: map[string]types.SchemaMapping{
+			"numpy":  {Type: types.DependencyTypePip, Package: "numpy", Version: ">=1.26,<2.0"},
+			"rclcpp": {Type: types.DependencyTypeApt, Package: "ros-humble-rclcpp"},
+		},
+	}
+	require.NoError(t, resolver.LoadSchemaInline(inlineSchema))
+
+	// Load file second (higher precedence, overrides numpy)
+	require.NoError(t, resolver.LoadSchema(filePath))
+
+	// numpy should be overridden by file
+	dep, ok, err := resolver.Resolve("numpy")
+	require.NoError(t, err)
+	assert.True(t, ok)
+	require.Len(t, dep.Constraints, 1)
+	assert.Equal(t, types.ConstraintOpEq2, dep.Constraints[0].Op)
+	assert.Equal(t, "1.26.4", dep.Constraints[0].Version)
+
+	// rclcpp still from inline (file didn't define it)
+	dep, ok, err = resolver.Resolve("rclcpp")
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "ros-humble-rclcpp", dep.Name)
+}
+
+func TestSchemaResolverInlineValidation(t *testing.T) {
+	resolver := NewSchemaResolverAdapter()
+
+	// Missing schema_version
+	err := resolver.LoadSchemaInline(types.SchemaFile{
+		Mappings: map[string]types.SchemaMapping{
+			"fmt": {Type: types.DependencyTypeApt, Package: "libfmt-dev"},
+		},
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "schema_version")
+
+	// Invalid type
+	err = resolver.LoadSchemaInline(types.SchemaFile{
+		SchemaVersion: "v1",
+		Mappings: map[string]types.SchemaMapping{
+			"fmt": {Type: "rpm", Package: "libfmt-dev"},
+		},
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid type")
+
+	// Empty package
+	err = resolver.LoadSchemaInline(types.SchemaFile{
+		SchemaVersion: "v1",
+		Mappings: map[string]types.SchemaMapping{
+			"fmt": {Type: types.DependencyTypeApt, Package: ""},
+		},
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "empty package")
+}

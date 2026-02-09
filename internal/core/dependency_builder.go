@@ -32,6 +32,12 @@ func (b DependencyBuilder) WithSchemaResolver(sr ports.SchemaResolverPort) Depen
 }
 
 func (b DependencyBuilder) Build(ctx context.Context, inputs types.Inputs, workspaceRoots []string) ([]types.Dependency, error) {
+	return b.BuildWithSchema(ctx, inputs, workspaceRoots, nil)
+}
+
+// BuildWithSchema is like Build but accepts an optional inline schema
+// that is loaded before any file-based schema_files.
+func (b DependencyBuilder) BuildWithSchema(ctx context.Context, inputs types.Inputs, workspaceRoots []string, inlineSchema *types.SchemaFile) ([]types.Dependency, error) {
 	var deps []types.Dependency
 
 	manualApt, err := parseEntries(inputs.Manual.Apt, types.DependencyTypeApt, "manual:apt")
@@ -85,7 +91,7 @@ func (b DependencyBuilder) Build(ctx context.Context, inputs types.Inputs, works
 		deps = append(deps, pipParsed...)
 
 		// Parse standard ROS tags and resolve through schema
-		schemaDeps, err := b.resolveROSTags(ctx, packageXMLPaths, inputs)
+		schemaDeps, err := b.resolveROSTags(ctx, packageXMLPaths, inputs, inlineSchema)
 		if err != nil {
 			return nil, err
 		}
@@ -97,6 +103,12 @@ func (b DependencyBuilder) Build(ctx context.Context, inputs types.Inputs, works
 }
 
 func (b DependencyBuilder) BuildFromSpecs(ctx context.Context, product types.Spec, profiles []types.Spec, inputs types.Inputs, workspaceRoots []string) ([]types.Dependency, error) {
+	return b.BuildFromSpecsWithSchema(ctx, product, profiles, inputs, workspaceRoots, nil)
+}
+
+// BuildFromSpecsWithSchema is like BuildFromSpecs but accepts an
+// optional inline schema loaded before file-based schemas.
+func (b DependencyBuilder) BuildFromSpecsWithSchema(ctx context.Context, product types.Spec, profiles []types.Spec, inputs types.Inputs, workspaceRoots []string, inlineSchema *types.SchemaFile) ([]types.Dependency, error) {
 	var deps []types.Dependency
 
 	productApt, err := parseEntries(product.Inputs.Manual.Apt, types.DependencyTypeApt, "product:manual:apt")
@@ -163,7 +175,7 @@ func (b DependencyBuilder) BuildFromSpecs(ctx context.Context, product types.Spe
 		deps = append(deps, pipParsed...)
 
 		// Parse standard ROS tags and resolve through schema
-		schemaDeps, err := b.resolveROSTags(ctx, packageXMLPaths, inputs)
+		schemaDeps, err := b.resolveROSTags(ctx, packageXMLPaths, inputs, inlineSchema)
 		if err != nil {
 			return nil, err
 		}
@@ -176,16 +188,32 @@ func (b DependencyBuilder) BuildFromSpecs(ctx context.Context, product types.Spe
 
 // resolveROSTags parses standard ROS tags from package.xml files and
 // resolves them through the schema mapping.  If no SchemaResolver is
-// configured or no schema_files are listed, this is a no-op.
-func (b DependencyBuilder) resolveROSTags(ctx context.Context, packageXMLPaths []string, inputs types.Inputs) ([]types.Dependency, error) {
+// configured, or no inline schema and no schema_files are listed,
+// this is a no-op.
+//
+// Load order (later overrides earlier per key):
+//  1. inlineSchema (from product/profile spec `schema:` field)
+//  2. inputs.PackageXML.SchemaFiles (file-based schemas)
+func (b DependencyBuilder) resolveROSTags(ctx context.Context, packageXMLPaths []string, inputs types.Inputs, inlineSchema *types.SchemaFile) ([]types.Dependency, error) {
 	if b.SchemaResolver == nil {
 		return nil, nil
 	}
-	if len(inputs.PackageXML.SchemaFiles) == 0 {
+
+	hasInline := inlineSchema != nil && len(inlineSchema.Mappings) > 0
+	hasFiles := len(inputs.PackageXML.SchemaFiles) > 0
+
+	if !hasInline && !hasFiles {
 		return nil, nil
 	}
 
-	// Load all schema layers (in order: last wins)
+	// Load inline schema first (lowest precedence)
+	if hasInline {
+		if err := b.SchemaResolver.LoadSchemaInline(*inlineSchema); err != nil {
+			return nil, err
+		}
+	}
+
+	// Load file-based schema layers (override inline per key)
 	for _, schemaPath := range inputs.PackageXML.SchemaFiles {
 		if err := b.SchemaResolver.LoadSchema(schemaPath); err != nil {
 			return nil, err

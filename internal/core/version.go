@@ -12,12 +12,17 @@ import (
 	"avular-packages/internal/types"
 )
 
+// preparedConstraint is a pre-parsed version constraint ready for
+// repeated comparison. For APT it holds a parsed Debian version; for
+// Pip it holds a PEP 440 specifier set.
 type preparedConstraint struct {
 	op  types.ConstraintOp
 	deb debversion.Version
 	pep pep440.Specifiers
 }
 
+// versionCache memoizes parsed version objects to avoid repeated parsing
+// during constraint evaluation and sorting.
 type versionCache struct {
 	depType types.DependencyType
 	deb     map[string]debversion.Version
@@ -25,6 +30,7 @@ type versionCache struct {
 	spec    map[string]pep440.Specifiers
 }
 
+// newVersionCache creates an empty cache for the given dependency type.
 func newVersionCache(depType types.DependencyType) *versionCache {
 	return &versionCache{
 		depType: depType,
@@ -34,6 +40,7 @@ func newVersionCache(depType types.DependencyType) *versionCache {
 	}
 }
 
+// debVersion returns a parsed Debian version, caching the result.
 func (c *versionCache) debVersion(value string) (debversion.Version, error) {
 	if parsed, ok := c.deb[value]; ok {
 		return parsed, nil
@@ -46,6 +53,7 @@ func (c *versionCache) debVersion(value string) (debversion.Version, error) {
 	return parsed, nil
 }
 
+// pepVersion returns a parsed PEP 440 version, caching the result.
 func (c *versionCache) pepVersion(value string) (pep440.Version, error) {
 	if parsed, ok := c.pep[value]; ok {
 		return parsed, nil
@@ -58,6 +66,7 @@ func (c *versionCache) pepVersion(value string) (pep440.Version, error) {
 	return parsed, nil
 }
 
+// pepSpec returns parsed PEP 440 specifiers, caching the result.
 func (c *versionCache) pepSpec(value string) (pep440.Specifiers, error) {
 	if parsed, ok := c.spec[value]; ok {
 		return parsed, nil
@@ -70,6 +79,8 @@ func (c *versionCache) pepSpec(value string) (pep440.Specifiers, error) {
 	return parsed, nil
 }
 
+// compare returns -1, 0, or 1 comparing two version strings using the
+// cache's dependency type semantics. Returns 0 on parse errors.
 func (c *versionCache) compare(a string, b string) int {
 	switch c.depType {
 	case types.DependencyTypeApt:
@@ -97,6 +108,9 @@ func (c *versionCache) compare(a string, b string) int {
 	}
 }
 
+// bestCompatibleVersion selects the highest version from available that
+// satisfies all of the dependency's constraints. Returns an error if
+// no compatible version exists.
 func bestCompatibleVersion(dep types.Dependency, available []string) (string, error) {
 	if len(available) == 0 {
 		return "", errbuilder.New().
@@ -129,6 +143,8 @@ func bestCompatibleVersion(dep types.Dependency, available []string) (string, er
 	return candidates[0], nil
 }
 
+// prepareConstraints parses each constraint's version string upfront so
+// it can be reused across multiple candidate comparisons.
 func prepareConstraints(depType types.DependencyType, constraints []types.Constraint, cache *versionCache) ([]preparedConstraint, error) {
 	var out []preparedConstraint
 	for _, constraint := range constraints {
@@ -157,6 +173,7 @@ func prepareConstraints(depType types.DependencyType, constraints []types.Constr
 	return out, nil
 }
 
+// satisfiesAll dispatches to the type-specific constraint checker.
 func satisfiesAll(depType types.DependencyType, version string, constraints []preparedConstraint, cache *versionCache) (bool, error) {
 	if len(constraints) == 0 {
 		return true, nil
@@ -173,6 +190,7 @@ func satisfiesAll(depType types.DependencyType, version string, constraints []pr
 	}
 }
 
+// satisfiesDeb checks a Debian version against all prepared constraints.
 func satisfiesDeb(version string, constraints []preparedConstraint, cache *versionCache) (bool, error) {
 	v, err := cache.debVersion(version)
 	if err != nil {
@@ -210,6 +228,7 @@ func satisfiesDeb(version string, constraints []preparedConstraint, cache *versi
 	return true, nil
 }
 
+// satisfiesPep440 checks a PEP 440 version against all prepared specifiers.
 func satisfiesPep440(version string, constraints []preparedConstraint, cache *versionCache) (bool, error) {
 	parsed, err := cache.pepVersion(version)
 	if err != nil {
@@ -223,6 +242,8 @@ func satisfiesPep440(version string, constraints []preparedConstraint, cache *ve
 	return true, nil
 }
 
+// toPep440Spec converts an internal constraint to a PEP 440 specifier
+// string (e.g. ">= 1.0", "~= 2.3").
 func toPep440Spec(constraint types.Constraint) string {
 	op := string(constraint.Op)
 	switch constraint.Op {

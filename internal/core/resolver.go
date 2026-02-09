@@ -14,12 +14,16 @@ import (
 	"avular-packages/internal/types"
 )
 
+// ResolverCore orchestrates dependency resolution by combining a repo
+// index, a packaging policy, and optionally a SAT solver for APT packages.
 type ResolverCore struct {
 	RepoIndex    ports.RepoIndexPort
 	Policy       ports.PolicyPort
 	UseAptSolver bool
 }
 
+// ResolveResult holds the outputs of a successful resolution: APT lock
+// entries, bundle manifest rows, resolved dependencies, and a report.
 type ResolveResult struct {
 	AptLocks       []types.AptLockEntry
 	BundleManifest []types.BundleManifestEntry
@@ -27,6 +31,7 @@ type ResolveResult struct {
 	Resolution     types.ResolutionReport
 }
 
+// NewResolverCore creates a resolver with the given repo index and policy.
 func NewResolverCore(repoIndex ports.RepoIndexPort, policy ports.PolicyPort) ResolverCore {
 	return ResolverCore{
 		RepoIndex: repoIndex,
@@ -150,6 +155,9 @@ func (r ResolverCore) Resolve(ctx context.Context, deps []types.Dependency, dire
 	return result, nil
 }
 
+// prepareDependency applies a resolution directive (if one exists) to a
+// dependency before it enters the SAT solver. Returns the potentially
+// updated dependency and a resolution record.
 func (r ResolverCore) prepareDependency(dep types.Dependency, directiveMap map[string]types.ResolutionDirective) (types.Dependency, types.ResolutionRecord, error) {
 	directive, ok := directiveFor(dep, directiveMap)
 	if !ok {
@@ -162,6 +170,9 @@ func (r ResolverCore) prepareDependency(dep types.Dependency, directiveMap map[s
 	return updated, record, nil
 }
 
+// resolveDependency picks the best version for a single dependency using
+// the repo index. If no compatible version is found and a resolution
+// directive exists, it retries with the updated constraints.
 func (r ResolverCore) resolveDependency(ctx context.Context, dep types.Dependency, directiveMap map[string]types.ResolutionDirective) (string, types.ResolutionRecord, error) {
 	available, err := r.RepoIndex.AvailableVersions(dep.Type, dep.Name)
 	if err != nil {
@@ -197,6 +208,9 @@ func (r ResolverCore) resolveDependency(ctx context.Context, dep types.Dependenc
 	return version, record, nil
 }
 
+// mergeDependencies combines duplicate (type, name) entries by merging
+// their constraints, then filters by priority so the highest-precedence
+// source wins.
 func mergeDependencies(deps []types.Dependency) []types.Dependency {
 	type key struct {
 		depType types.DependencyType
@@ -221,6 +235,8 @@ func mergeDependencies(deps []types.Dependency) []types.Dependency {
 	return out
 }
 
+// mapDirectives indexes resolution directives by their normalized
+// "type:name" key for O(1) lookup during resolution.
 func mapDirectives(directives []types.ResolutionDirective) map[string]types.ResolutionDirective {
 	mapped := map[string]types.ResolutionDirective{}
 	for _, directive := range directives {
@@ -232,12 +248,17 @@ func mapDirectives(directives []types.ResolutionDirective) map[string]types.Reso
 	return mapped
 }
 
+// directiveFor looks up whether a resolution directive exists for the
+// given dependency, keyed by "type:name".
 func directiveFor(dep types.Dependency, directives map[string]types.ResolutionDirective) (types.ResolutionDirective, bool) {
 	key := fmt.Sprintf("%s:%s", dep.Type, dep.Name)
 	directive, ok := directives[key]
 	return directive, ok
 }
 
+// applyGroupPins adds version constraints from packaging group pins to a
+// dependency. Only pins whose parsed name matches the dependency name are
+// applied.
 func applyGroupPins(dep types.Dependency, group types.PackagingGroup) (types.Dependency, error) {
 	if len(group.Pins) == 0 {
 		return dep, nil
@@ -255,6 +276,10 @@ func applyGroupPins(dep types.Dependency, group types.PackagingGroup) (types.Dep
 	return dep, nil
 }
 
+// filterConstraintsByPriority keeps only the constraints from the
+// highest-priority source (product > profile > package_xml). Within
+// that tier, hard constraints (those with an operator) take precedence
+// over bare name-only constraints.
 func filterConstraintsByPriority(constraints []types.Constraint) []types.Constraint {
 	if len(constraints) == 0 {
 		return constraints
@@ -301,6 +326,8 @@ func filterConstraintsByPriority(constraints []types.Constraint) []types.Constra
 	return fallback
 }
 
+// normalizeDirectiveKey lowercases the type portion and normalizes pip
+// package names so that directive lookups are case-insensitive.
 func normalizeDirectiveKey(value string) string {
 	parts := strings.SplitN(strings.TrimSpace(value), ":", 2)
 	if len(parts) != 2 {
@@ -314,6 +341,8 @@ func normalizeDirectiveKey(value string) string {
 	return fmt.Sprintf("%s:%s", depType, name)
 }
 
+// aptLockPackageName converts a dependency to the package name used in
+// apt.lock output. Pip packages are prefixed with "python3-".
 func aptLockPackageName(dep types.Dependency) string {
 	if dep.Type == types.DependencyTypePip {
 		return normalizeDebPackageName("python3-" + dep.Name)
@@ -321,12 +350,15 @@ func aptLockPackageName(dep types.Dependency) string {
 	return dep.Name
 }
 
+// normalizeDebPackageName lowercases and replaces underscores with hyphens
+// to match Debian package naming conventions.
 func normalizeDebPackageName(value string) string {
 	normalized := strings.ToLower(strings.TrimSpace(value))
 	normalized = strings.ReplaceAll(normalized, "_", "-")
 	return normalized
 }
 
+// mapValues extracts the values from a dependency map into a slice.
 func mapValues(values map[string]types.Dependency) []types.Dependency {
 	out := make([]types.Dependency, 0, len(values))
 	for _, dep := range values {
@@ -335,6 +367,9 @@ func mapValues(values map[string]types.Dependency) []types.Dependency {
 	return out
 }
 
+// constraintPriority assigns a numeric rank to constraint sources so that
+// product-level constraints override profile-level, which override
+// package_xml-level.
 func constraintPriority(source string) int {
 	normalized := strings.ToLower(strings.TrimSpace(source))
 	switch {

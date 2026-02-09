@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -20,34 +21,40 @@ import (
 func (s Service) Resolve(ctx context.Context, req ResolveRequest) (ResolveResult, error) {
 	productPath := strings.TrimSpace(req.ProductPath)
 	if productPath == "" {
+		productPath = discoverProduct()
+	}
+	if productPath == "" {
 		return ResolveResult{}, errbuilder.New().
 			WithCode(errbuilder.CodeInvalidArgument).
-			WithMsg("product spec path is required")
+			WithMsg("product spec path is required (provide --product or place product.yaml in current directory)")
 	}
-	repoIndex := strings.TrimSpace(req.RepoIndex)
-	if repoIndex == "" {
-		return ResolveResult{}, errbuilder.New().
-			WithCode(errbuilder.CodeInvalidArgument).
-			WithMsg("repo index file is required")
-	}
-	outputDir := strings.TrimSpace(req.OutputDir)
-	if outputDir == "" {
-		return ResolveResult{}, errbuilder.New().
-			WithCode(errbuilder.CodeInvalidArgument).
-			WithMsg("output directory is required")
-	}
-	targetUbuntu := strings.TrimSpace(req.TargetUbuntu)
-	if targetUbuntu == "" {
-		return ResolveResult{}, errbuilder.New().
-			WithCode(errbuilder.CodeInvalidArgument).
-			WithMsg("target Ubuntu release is required")
-	}
-	targetUbuntu = normalizeTargetUbuntu(targetUbuntu)
 
 	product, err := s.SpecLoader.LoadProduct(productPath)
 	if err != nil {
 		return ResolveResult{}, err
 	}
+
+	// Apply spec defaults for values not provided by the caller
+	req = applySpecDefaults(req, product.Defaults)
+
+	repoIndex := strings.TrimSpace(req.RepoIndex)
+	if repoIndex == "" {
+		return ResolveResult{}, errbuilder.New().
+			WithCode(errbuilder.CodeInvalidArgument).
+			WithMsg("repo index file is required (provide --repo-index or set defaults.repo_index in product spec)")
+	}
+	outputDir := strings.TrimSpace(req.OutputDir)
+	if outputDir == "" {
+		outputDir = "out"
+	}
+	targetUbuntu := strings.TrimSpace(req.TargetUbuntu)
+	if targetUbuntu == "" {
+		return ResolveResult{}, errbuilder.New().
+			WithCode(errbuilder.CodeInvalidArgument).
+			WithMsg("target Ubuntu release is required (provide --target-ubuntu or set defaults.target_ubuntu in product spec)")
+	}
+	targetUbuntu = normalizeTargetUbuntu(targetUbuntu)
+
 	profiles, err := s.ProfileSource.LoadProfiles(product, req.Profiles)
 	if err != nil {
 		return ResolveResult{}, err
@@ -71,11 +78,17 @@ func (s Service) Resolve(ctx context.Context, req ResolveRequest) (ResolveResult
 		)
 	}
 
+	// Collect inline schema from product spec (composed spec inherits it)
+	var inlineSchema *types.SchemaFile
+	if product.Schema != nil && len(product.Schema.Mappings) > 0 {
+		inlineSchema = product.Schema
+	}
+
 	builder := core.NewDependencyBuilder(s.Workspace, s.PackageXML)
 	if s.SchemaResolver != nil {
 		builder = builder.WithSchemaResolver(s.SchemaResolver)
 	}
-	deps, err := builder.BuildFromSpecs(ctx, product, profiles, resolveInputs, req.Workspace)
+	deps, err := builder.BuildFromSpecsWithSchema(ctx, product, profiles, resolveInputs, req.Workspace, inlineSchema)
 	if err != nil {
 		return ResolveResult{}, err
 	}
@@ -88,56 +101,107 @@ func (s Service) Resolve(ctx context.Context, req ResolveRequest) (ResolveResult
 		return ResolveResult{}, err
 	}
 
-	output := adapters.NewOutputFileAdapter(outputDir)
-	if err := output.WriteAptLock(result.AptLocks); err != nil {
-		return ResolveResult{}, err
-	}
-	if err := output.WriteBundleManifest(result.BundleManifest); err != nil {
-		return ResolveResult{}, err
-	}
 	snapshotID := strings.TrimSpace(req.SnapshotID)
 	if snapshotID == "" {
 		snapshotID = buildSnapshotID(composed.Publish.Repository, targetUbuntu, result.AptLocks)
 	}
 	intent := buildSnapshotIntent(composed.Publish.Repository, snapshotID, s.Clock)
-	if err := output.WriteSnapshotIntent(intent); err != nil {
+
+	if err := writeResolveOutputs(outputDir, req, result, intent); err != nil {
 		return ResolveResult{}, err
-	}
-	if err := output.WriteResolutionReport(result.Resolution); err != nil {
-		return ResolveResult{}, err
-	}
-	if req.EmitAptPreferences {
-		if err := output.WriteAptPreferences(result.AptLocks); err != nil {
-			return ResolveResult{}, err
-		}
-	}
-	if req.EmitAptInstallList {
-		if err := output.WriteAptInstallList(result.AptLocks); err != nil {
-			return ResolveResult{}, err
-		}
-	}
-	if req.EmitSnapshotSources {
-		if err := output.WriteSnapshotSources(intent, req.SnapshotAptBaseURL, req.SnapshotAptComponent, req.SnapshotAptArchs); err != nil {
-			return ResolveResult{}, err
-		}
-	}
-	if req.CompatGet {
-		compat := adapters.NewCompatibilityOutputAdapter(outputDir)
-		if err := compat.WriteGetDependencies(result.ResolvedDeps); err != nil {
-			return ResolveResult{}, err
-		}
-	}
-	if req.CompatRosdep {
-		compat := adapters.NewCompatibilityOutputAdapter(outputDir)
-		if err := compat.WriteRosdepMapping(result.ResolvedDeps); err != nil {
-			return ResolveResult{}, err
-		}
 	}
 	return ResolveResult{
 		ProductName: composed.Metadata.Name,
 		SnapshotID:  snapshotID,
 		OutputDir:   outputDir,
 	}, nil
+}
+
+// writeResolveOutputs persists all resolver artifacts to the output
+// directory: lock files, manifests, snapshot intent, and optional
+// compatibility outputs.
+func writeResolveOutputs(outputDir string, req ResolveRequest, result core.ResolveResult, intent types.SnapshotIntent) error {
+	output := adapters.NewOutputFileAdapter(outputDir)
+	if err := output.WriteAptLock(result.AptLocks); err != nil {
+		return err
+	}
+	if err := output.WriteBundleManifest(result.BundleManifest); err != nil {
+		return err
+	}
+	if err := output.WriteSnapshotIntent(intent); err != nil {
+		return err
+	}
+	if err := output.WriteResolutionReport(result.Resolution); err != nil {
+		return err
+	}
+	if req.EmitAptPreferences {
+		if err := output.WriteAptPreferences(result.AptLocks); err != nil {
+			return err
+		}
+	}
+	if req.EmitAptInstallList {
+		if err := output.WriteAptInstallList(result.AptLocks); err != nil {
+			return err
+		}
+	}
+	if req.EmitSnapshotSources {
+		if err := output.WriteSnapshotSources(intent, req.SnapshotAptBaseURL, req.SnapshotAptComponent, req.SnapshotAptArchs); err != nil {
+			return err
+		}
+	}
+	if req.CompatGet {
+		compat := adapters.NewCompatibilityOutputAdapter(outputDir)
+		if err := compat.WriteGetDependencies(result.ResolvedDeps); err != nil {
+			return err
+		}
+	}
+	if req.CompatRosdep {
+		compat := adapters.NewCompatibilityOutputAdapter(outputDir)
+		if err := compat.WriteRosdepMapping(result.ResolvedDeps); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// applySpecDefaults fills in ResolveRequest fields from the product
+// spec's defaults section when the request field is empty.
+func applySpecDefaults(req ResolveRequest, defaults types.SpecDefaults) ResolveRequest {
+	if strings.TrimSpace(req.TargetUbuntu) == "" && defaults.TargetUbuntu != "" {
+		req.TargetUbuntu = defaults.TargetUbuntu
+	}
+	if len(req.Workspace) == 0 && len(defaults.Workspace) > 0 {
+		req.Workspace = defaults.Workspace
+	}
+	if strings.TrimSpace(req.RepoIndex) == "" && defaults.RepoIndex != "" {
+		req.RepoIndex = defaults.RepoIndex
+	}
+	if strings.TrimSpace(req.OutputDir) == "" && defaults.Output != "" {
+		req.OutputDir = defaults.Output
+	}
+	return req
+}
+
+// discoverProduct attempts to find a product spec in conventional
+// locations.  Returns the path or empty string if none found.
+func discoverProduct() string {
+	candidates := []string{
+		"product.yaml",
+		"product.yml",
+		"avular-product.yaml",
+		"avular-product.yml",
+	}
+	for _, candidate := range candidates {
+		if fileExists(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 func buildSnapshotIntent(repo types.PublishRepository, snapshotID string, clock func() time.Time) types.SnapshotIntent {

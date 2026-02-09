@@ -298,25 +298,136 @@ publish:
 - Schema files must have `schema_version: "v1"`.
 - Schema mappings must have a valid `type` (`apt` or `pip`) and a non-empty `package`.
 
-## 10) CLI Flags
+## 10) Inline Schema
+
+Product and profile specs can embed schema mappings directly via the `schema` field. This eliminates the need for a separate schema file in simple cases.
+
+```yaml
+api_version: "v1"
+kind: "product"
+metadata:
+  name: "my-product"
+  version: "2026.02"
+  owners: ["team"]
+schema:
+  schema_version: "v1"
+  mappings:
+    rclcpp:
+      type: apt
+      package: ros-humble-rclcpp
+    numpy:
+      type: pip
+      package: numpy
+      version: ">=1.26,<2.0"
+inputs:
+  package_xml:
+    enabled: true
+    tags: ["debian_depend", "pip_depend"]
+    schema_files:
+      - "schemas/overrides.yaml"   # these override inline mappings per key
+```
+
+### 10.1 Schema Precedence (Full)
+
+```
+inline schema (spec `schema:` field)        (loaded first = lowest precedence)
+  ↓ overridden by
+spec schema_files (profile → product)
+  ↓ overridden by
+CLI --schema flag                            (loaded last = highest precedence)
+```
+
+## 11) Spec Defaults
+
+Product specs can embed project-level defaults that replace CLI flags. CLI flags always override defaults when provided.
+
+```yaml
+defaults:
+  target_ubuntu: "24.04"
+  workspace:
+    - "./src"
+  repo_index: "./repo-index.yaml"
+  output: "out"
+```
+
+With defaults, `avular-packages resolve --product product.yaml` is sufficient -- no additional flags needed.
+
+## 12) Inline Profiles
+
+Products can embed profile definitions directly in the `compose` list using `source: "inline"`. This removes the need for separate profile files in simple cases.
+
+```yaml
+compose:
+  - name: "default"
+    source: "inline"
+    profile:
+      inputs:
+        package_xml:
+          enabled: true
+          tags: ["debian_depend", "pip_depend"]
+      packaging:
+        groups:
+          - name: "apt-individual"
+            mode: "individual"
+            scope: "runtime"
+            matches: ["apt:*"]
+            targets: ["24.04"]
+```
+
+Inline profiles can be mixed with file-based profiles:
+
+```yaml
+compose:
+  - name: "shared-base"
+    source: "local"
+    path: "profiles/base.yaml"
+  - name: "product-specific"
+    source: "inline"
+    profile:
+      packaging:
+        groups:
+          - name: "custom-group"
+            mode: "meta-bundle"
+            scope: "runtime"
+            matches: ["pip:*"]
+            targets: ["24.04"]
+```
+
+## 13) Auto-Discovery
+
+When `--product` is not provided, the CLI searches for product specs in conventional locations:
+
+1. `product.yaml`
+2. `product.yml`
+3. `avular-product.yaml`
+4. `avular-product.yml`
+
+Combined with spec defaults, this enables a zero-flag workflow:
+
+```bash
+# Just run it -- product auto-discovered, defaults from spec
+avular-packages resolve
+```
+
+## 14) CLI Flags
 
 Schema files can be provided via:
 
-1. **Spec file** -- `inputs.package_xml.schema_files` in profile or product YAML.
-2. **CLI flag** -- `--schema <path>` (repeatable). CLI schemas are appended after spec schemas, giving them highest precedence.
+1. **Inline** -- `schema:` field in product or profile spec.
+2. **Spec file** -- `inputs.package_xml.schema_files` in profile or product YAML.
+3. **CLI flag** -- `--schema <path>` (repeatable). CLI schemas are appended after spec schemas, giving them highest precedence.
 
 ```bash
-# Schema from spec only
-avular-packages resolve --product product.yaml --repo-index repo.yaml \
-    --target-ubuntu 22.04 --output out
+# Schema from spec only (with defaults, no other flags needed)
+avular-packages resolve --product product.yaml
 
-# Schema from CLI (overrides spec schemas)
+# Schema from CLI (overrides spec schemas and inline)
 avular-packages resolve --product product.yaml --repo-index repo.yaml \
     --target-ubuntu 22.04 --output out \
     --schema schemas/base.yaml --schema schemas/override.yaml
 ```
 
-## 11) Migration Path
+## 15) Migration Path
 
 ### From export-only to schema-resolved
 
@@ -325,6 +436,17 @@ avular-packages resolve --product product.yaml --repo-index repo.yaml \
 3. **Reference the schema** in your profile's `inputs.package_xml.schema_files`.
 4. **Gradually adopt standard ROS tags** (`<depend>`, `<exec_depend>`) in new package.xml files while keeping export tags in existing ones.
 5. Both input methods coexist and produce dependencies that merge into the same resolution pipeline.
+
+### From multi-file to single-file
+
+For simple products, consolidate everything into one file:
+
+1. **Move schema mappings** from separate `schema.yaml` into the product spec's `schema:` field.
+2. **Move profile definitions** from separate profile files into `compose:` entries with `source: "inline"`.
+3. **Add `defaults:`** for workspace, target_ubuntu, repo_index, and output to eliminate CLI flags.
+4. **Name the file `product.yaml`** in the project root for auto-discovery.
+
+See `fixtures/single-file-product.yaml` for a complete example.
 
 ### Precedence Order
 

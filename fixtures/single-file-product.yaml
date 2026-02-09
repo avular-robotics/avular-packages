@@ -1,0 +1,77 @@
+# Single-file product spec demonstrating all friction-reduction features:
+#   1. Inline schema mappings (no separate schema.yaml needed)
+#   2. Inline profile (no separate profile file needed)
+#   3. Spec defaults (no CLI flags for workspace, target, repo-index needed)
+#
+# Usage:
+#   avular-packages resolve --product fixtures/single-file-product.yaml
+#   # Or with auto-discovery (if named product.yaml in current dir):
+#   avular-packages resolve
+
+api_version: "v1"
+kind: "product"
+metadata:
+  name: "single-file-demo"
+  version: "2026.02.09"
+  owners: ["platform"]
+
+# Defaults eliminate the need for CLI flags in common cases.
+# CLI flags always override these when provided.
+defaults:
+  target_ubuntu: "24.04"
+  workspace:
+    - "./src"
+  repo_index: "fixtures/repo-index.yaml"
+  output: "out"
+
+# Inline schema: maps abstract ROS keys to concrete packages.
+# File-based schema_files (in inputs) override these per key.
+schema:
+  schema_version: "v1"
+  mappings:
+    rclcpp:
+      type: apt
+      package: ros-humble-rclcpp
+    fmt:
+      type: apt
+      package: libfmt-dev
+      version: ">=9.1.0"
+    numpy:
+      type: pip
+      package: numpy
+      version: ">=1.26,<2.0"
+
+# Inline profile: no separate file needed for simple products.
+compose:
+  - name: "default-profile"
+    source: "inline"
+    profile:
+      inputs:
+        package_xml:
+          enabled: true
+          tags: ["debian_depend", "pip_depend"]
+      packaging:
+        groups:
+          - name: "apt-individual"
+            mode: "individual"
+            scope: "runtime"
+            matches: ["apt:*"]
+            targets: ["24.04"]
+          - name: "pip-meta"
+            mode: "meta-bundle"
+            scope: "runtime"
+            matches: ["pip:*"]
+            targets: ["24.04"]
+
+# Product-level inputs (merged on top of profile inputs)
+inputs:
+  package_xml:
+    enabled: true
+    tags: ["debian_depend", "pip_depend"]
+
+publish:
+  repository:
+    name: "avular"
+    channel: "dev"
+    snapshot_prefix: "single-demo"
+    signing_key: "avular-release"

@@ -9,6 +9,9 @@ import (
 	"avular-packages/internal/types"
 )
 
+// opTokens is the ordered list of constraint operators tried during
+// parsing. Longer tokens must precede shorter ones to avoid false matches
+// (e.g. ">=" before ">").
 var opTokens = []types.ConstraintOp{
 	types.ConstraintOpGte,
 	types.ConstraintOpLte,
@@ -20,6 +23,9 @@ var opTokens = []types.ConstraintOp{
 	types.ConstraintOpLt,
 }
 
+// ParseConstraint splits a raw "name>=version" string into a Constraint.
+// When no operator is found the constraint is treated as a bare name
+// reference with ConstraintOpNone.
 func ParseConstraint(raw string, source string) (types.Constraint, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

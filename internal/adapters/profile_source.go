@@ -59,11 +59,43 @@ func (a ProfileSourceAdapter) loadComposeProfile(compose types.ComposeRef) (type
 		return a.Spec.LoadProfile(compose.Path)
 	case "git":
 		return a.loadGitProfile(compose)
+	case "inline":
+		return a.loadInlineProfile(compose)
 	default:
 		return types.Spec{}, errbuilder.New().
 			WithCode(errbuilder.CodeInvalidArgument).
 			WithMsg(fmt.Sprintf("unsupported compose source: %s", compose.Source))
 	}
+}
+
+func (a ProfileSourceAdapter) loadInlineProfile(compose types.ComposeRef) (types.Spec, error) {
+	if compose.Profile == nil {
+		return types.Spec{}, errbuilder.New().
+			WithCode(errbuilder.CodeInvalidArgument).
+			WithMsg("compose source is 'inline' but no profile definition provided")
+	}
+
+	name := strings.TrimSpace(compose.Name)
+	if name == "" {
+		name = "inline"
+	}
+
+	version := strings.TrimSpace(compose.Version)
+	if version == "" {
+		version = "0.0.0"
+	}
+
+	return types.Spec{
+		APIVersion: "v1",
+		Kind:       types.SpecKindProfile,
+		Metadata: types.Metadata{
+			Name:    name,
+			Version: version,
+		},
+		Inputs:      compose.Profile.Inputs,
+		Packaging:   compose.Profile.Packaging,
+		Resolutions: compose.Profile.Resolutions,
+	}, nil
 }
 
 func (a ProfileSourceAdapter) loadGitProfile(compose types.ComposeRef) (types.Spec, error) {

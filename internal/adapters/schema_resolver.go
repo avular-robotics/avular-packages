@@ -94,6 +94,52 @@ func (a *SchemaResolverAdapter) LoadSchema(path string) error {
 	return nil
 }
 
+// LoadSchemaInline merges an in-memory SchemaFile into the resolver.
+// Same override semantics as LoadSchema: later loads win per key.
+func (a *SchemaResolverAdapter) LoadSchemaInline(schema types.SchemaFile) error {
+	if schema.SchemaVersion == "" {
+		return errbuilder.New().
+			WithCode(errbuilder.CodeInvalidArgument).
+			WithMsg("inline schema missing schema_version")
+	}
+
+	for key, mapping := range schema.Mappings {
+		normalizedKey := strings.TrimSpace(key)
+		if normalizedKey == "" {
+			continue
+		}
+
+		if mapping.Package == "" {
+			return errbuilder.New().
+				WithCode(errbuilder.CodeInvalidArgument).
+				WithMsg("inline schema key '" + normalizedKey + "' has empty package")
+		}
+
+		if mapping.Type != types.DependencyTypeApt && mapping.Type != types.DependencyTypePip {
+			return errbuilder.New().
+				WithCode(errbuilder.CodeInvalidArgument).
+				WithMsg("inline schema key '" + normalizedKey + "' has invalid type '" + string(mapping.Type) + "'")
+		}
+
+		if _, exists := a.merged[normalizedKey]; exists {
+			log.Debug().
+				Str("key", normalizedKey).
+				Str("layer", "inline").
+				Msg("schema key overridden by later layer")
+		}
+
+		a.merged[normalizedKey] = mapping
+	}
+
+	a.layers = append(a.layers, "<inline>")
+	log.Debug().
+		Int("keys", len(schema.Mappings)).
+		Int("total", len(a.merged)).
+		Msg("inline schema layer loaded")
+
+	return nil
+}
+
 // Resolve maps a single abstract key to a concrete Dependency.
 func (a *SchemaResolverAdapter) Resolve(key string) (types.Dependency, bool, error) {
 	normalizedKey := strings.TrimSpace(key)

@@ -14,6 +14,12 @@ type SchemaResolverPort interface {
 	// resolver's internal table.  Later loads override earlier ones per key.
 	LoadSchema(path string) error
 
+	// LoadSchemaInline merges an in-memory SchemaFile into the resolver's
+	// table.  This supports inline schema mappings embedded directly in
+	// product or profile specs.  Same override semantics as LoadSchema:
+	// later loads win per key.
+	LoadSchemaInline(schema types.SchemaFile) error
+
 	// Resolve maps a single abstract key to a concrete typed Dependency.
 	// Returns (dep, true, nil) on hit, (zero, false, nil) on miss, or
 	// (zero, false, err) on failure.
